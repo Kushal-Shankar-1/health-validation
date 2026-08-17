@@ -1,0 +1,119 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en"
+early_access: false
+tone_instructions: >-
+  Act as a senior Go infrastructure engineer. Focus on correctness, clear and
+  maintainable design, safe node-local hardware-health evaluation, and concise,
+  production-ready suggestions. Prefer actionable behavioral findings over
+  style-only comments covered by gofmt and linters.
+
+reviews:
+  profile: chill
+  high_level_summary_in_walkthrough: true
+  suggested_reviewers: false
+  in_progress_fortune: false
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  slop_detection:
+    enabled: true
+  path_filters:
+    - "!bazel-bin/**"
+    - "!bazel-out/**"
+    - "!bazel-testlogs/**"
+    - "!**/*.pb.go"
+    - "!**/*_grpc.pb.go"
+  path_instructions:
+    - path: "catalog/**/*.go"
+      instructions: >-
+        Catalog is the platform-independent health vocabulary, check registry,
+        CEL rule evaluation, and domain measurements. Keep it independent of
+        toolkit. Review check semantics, stable result schema and identifiers,
+        architecture/threshold assumptions, CEL-rule safety, and table-driven
+        coverage for new or changed checks.
+    - path: "catalog/checks.go"
+      instructions: >-
+        Treat this as the canonical check registry. Verify registrations are
+        intentional, identifiers are stable, and a new check is accompanied by
+        its factory, measurement, rules, and tests in the appropriate domain.
+    - path: "toolkit/**/*.go"
+      instructions: >-
+        Toolkit depends on catalog and supplies sensors, backends, NVML
+        integration, and the operator CLI. Review backend error handling,
+        context propagation, resource cleanup, operator diagnostics, JSON
+        output compatibility, and mock-backed tests. Do not introduce a
+        catalog-to-toolkit dependency.
+    - path: "toolkit/nvml/**"
+      instructions: >-
+        NVML code is Linux-only and uses cgo. Review device-handle lifetimes,
+        driver/API error translation, unsupported-hardware behavior, and Linux
+        build constraints. Ensure tests do not require physical GPUs unless
+        explicitly designed for that environment.
+    - path: "toolkit/cmd/health-validation/**"
+      instructions: >-
+        Review CLI behavior for stable flags and commands, valid JSON output,
+        actionable errors, and the exit policy: PASS/INFO/WARNING exit 0,
+        CRITICAL/UNKNOWN exit 1, and execution/config/collection errors exit 2.
+        Consumers should use overall_severity for the precise verdict.
+    - path: "**/BUILD.bazel"
+      instructions: >-
+        Review Bazel targets for correct visibility, dependencies, platform
+        constraints, and test coverage. Do not hand-maintain dependencies owned
+        by Gazelle; Go import changes should be followed by Gazelle output.
+    - path: "MODULE.bazel"
+      instructions: >-
+        Review module/dependency changes for reproducible Bazel resolution,
+        minimal dependency additions, and compatibility with supported CI and
+        RBE platforms.
+    - path: "**/go.mod"
+      instructions: >-
+        This repository has independently versioned catalog and toolkit Go
+        modules. Review dependency changes for module-boundary correctness,
+        minimal additions, replace directives, and whether mod tidy has been
+        applied to each affected module.
+    - path: "**/go.sum"
+      instructions: >-
+        Review checksum changes for unexpected dependency churn and consistency
+        with the corresponding go.mod change.
+    - path: "**/*_test.go"
+      instructions: >-
+        Prefer deterministic, table-driven tests that cover hardware,
+        architecture, and collection failure modes. Avoid tests that depend on
+        local GPUs, timing, shared mutable state, or host-specific inventory.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Review GitHub Actions workflows for trigger correctness, permissions,
+        secret handling, Bazel cache keys, Linux/RBE coverage for NVML paths,
+        and artifact retention.
+    - path: "docs/**"
+      instructions: >-
+        Review documentation for accurate check semantics, supported platform
+        assumptions, safe operator guidance, and Bazel-first workflow commands.
+    - path: "**/*.md"
+      instructions: >-
+        Review Markdown for technical correctness, clear operator guidance,
+        working links, and realistic, safe command examples.
+    - path: "**/*.yaml"
+      instructions: >-
+        Review YAML for schema correctness, indentation, duplicate keys, and
+        environment-specific assumptions.
+    - path: "**/*.yml"
+      instructions: >-
+        Review YAML for schema correctness, indentation, duplicate keys, and
+        environment-specific assumptions.
+  auto_review:
+    enabled: true
+    ignore_usernames: []
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - AGENTS.md
+      - README.md
+      - CONTRIBUTING.md
+      - STYLE_GUIDE.md
+
+issue_enrichment:
+  planning:
+    enabled: true
