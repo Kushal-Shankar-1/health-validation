@@ -353,7 +353,10 @@ validate against the published
   Entries in `skipped_checks` carry the declared value, so gate on `skipped`
   first.
 - **`skipped_checks`** — checks that did **not** run, with a `skip_reason`
-  (`THRESHOLD_UNCONFIGURED`, `CHECK_DISABLED`, `NO_APPLICABLE_MEASUREMENT`, …).
+  (`THRESHOLD_UNCONFIGURED`, `CHECK_DISABLED`, `SENSOR_MISSING`, …).
+  `SENSOR_MISSING` is the one to alert on: a whole domain reported nothing, so
+  those checks were never assessed — distinct from `CHECK_DISABLED`, which is
+  deliberate.
   A PASS with many skips is **partial coverage**, not a clean bill of health —
   check `skipped_checks` and `completion_ratio` if coverage matters to your gate.
 
