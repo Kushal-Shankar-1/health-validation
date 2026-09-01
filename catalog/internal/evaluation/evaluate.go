@@ -87,8 +87,9 @@ func (e *EvaluationEngine) EvaluateCheck(cd *health.CheckDefinition, m health.Me
 //
 // The skip is a report, not a failure: skipped checks are excluded from
 // OverallSeverity, so a missing sensor never turns a node CRITICAL on its
-// own. It does lower CompletionRatio, which is the point — the node was
-// not fully assessed. The measurement-independent skips are decided
+// own. Recording it is the point — the check stays visible as unassessed
+// under a skip_reason a consumer can act on. The measurement-independent
+// skips are decided
 // first, so an operator's [health.CheckDisabled] outranks SensorMissing:
 // a check turned off on purpose never reads as a sensor hole.
 //
@@ -134,8 +135,8 @@ func (e *EvaluationEngine) EvaluateBatch(checks map[string]*health.CheckDefiniti
 		}
 
 		// Nothing of this check's domain arrived. Record the hole so the
-		// check is visibly unassessed — and so CompletionRatio counts it —
-		// instead of silently producing no verdict.
+		// check is visibly unassessed instead of silently producing no
+		// verdict.
 		if !presentCategories[cd.Category] {
 			verdicts = append(verdicts, skippedVerdict(cd, now, health.SensorMissing,
 				fmt.Sprintf("no measurement of category %s was supplied", cd.Category)))

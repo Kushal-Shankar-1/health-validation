@@ -542,5 +542,5 @@ func discoveryFailureVerdict(cause error) health.NodeVerdict {
 		MaturityLevel:     health.Stable,
 		NVIDIAEndorsed:    true,
 	}
-	return health.AggregateNodeVerdict([]health.CheckVerdict{cv}, 0)
+	return health.AggregateNodeVerdict([]health.CheckVerdict{cv})
 }

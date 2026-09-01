@@ -30,7 +30,7 @@ func TestAggregateNodeVerdict_SchemaVersion(t *testing.T) {
 		t.Errorf("NodeVerdictSchemaVersion = %q, want %q", got, want)
 	}
 
-	nv := AggregateNodeVerdict(nil, 0)
+	nv := AggregateNodeVerdict(nil)
 	if got, want := nv.SchemaVersion, NodeVerdictSchemaVersion; got != want {
 		t.Errorf("SchemaVersion = %q, want %q", got, want)
 	}
@@ -44,7 +44,7 @@ func TestAggregateNodeVerdict_RunAndTraceIDs(t *testing.T) {
 		{CheckID: "b", Severity: Critical},
 		{CheckID: "c", Skipped: true, SkipReason: CheckDisabled},
 	}
-	nv := AggregateNodeVerdict(verdicts, 0)
+	nv := AggregateNodeVerdict(verdicts)
 
 	if nv.TraceID == "" {
 		t.Fatal("NodeVerdict.TraceID is empty")
@@ -73,7 +73,7 @@ func TestAggregateNodeVerdict_RunAndTraceIDs(t *testing.T) {
 	}
 
 	// A separate run is a distinct trace.
-	if other := AggregateNodeVerdict(verdicts, 0); other.TraceID == nv.TraceID {
+	if other := AggregateNodeVerdict(verdicts); other.TraceID == nv.TraceID {
 		t.Error("two runs produced the same trace_id")
 	}
 }
@@ -81,7 +81,7 @@ func TestAggregateNodeVerdict_RunAndTraceIDs(t *testing.T) {
 func TestAggregateNodeVerdict_CPUCategoryJSON(t *testing.T) {
 	nv := AggregateNodeVerdict([]CheckVerdict{
 		{CheckID: "cpu", Severity: Critical, Category: CPU},
-	}, 0)
+	})
 
 	data, err := json.Marshal(nv)
 	if err != nil {
@@ -188,7 +188,7 @@ func TestNodeVerdictJSON_CatalogVersion(t *testing.T) {
 	})
 
 	t.Run("aggregated verdict", func(t *testing.T) {
-		nv := AggregateNodeVerdict(nil, 0)
+		nv := AggregateNodeVerdict(nil)
 		if nv.CatalogVersion == "" {
 			t.Fatal("CatalogVersion is empty")
 		}
@@ -254,7 +254,7 @@ func TestAggregateNodeVerdict_Basic(t *testing.T) {
 		{CheckID: "c", Severity: Critical, Category: NVLink, Timestamp: now},
 	}
 
-	nv := AggregateNodeVerdict(verdicts, 0)
+	nv := AggregateNodeVerdict(verdicts)
 
 	if nv.OverallSeverity != Critical {
 		t.Errorf("overall severity = %v, want CRITICAL", nv.OverallSeverity)
@@ -280,7 +280,7 @@ func TestAggregateNodeVerdict_WithSkipped(t *testing.T) {
 		{CheckID: "b", Skipped: true, SkipReason: CheckDisabled, Category: GPU, Timestamp: now},
 	}
 
-	nv := AggregateNodeVerdict(verdicts, 0)
+	nv := AggregateNodeVerdict(verdicts)
 
 	if nv.OverallSeverity != Pass {
 		t.Errorf("overall severity = %v, want PASS (skipped excluded)", nv.OverallSeverity)
@@ -293,7 +293,11 @@ func TestAggregateNodeVerdict_WithSkipped(t *testing.T) {
 	}
 }
 
-func TestAggregateNodeVerdict_CompletionThreshold(t *testing.T) {
+// TestAggregateNodeVerdict_MostlySkipped guards that a node whose checks
+// were mostly skipped still reports the verdict of the checks that ran:
+// skips are a first-class outcome (e.g. an H100 check on GB300 hardware),
+// not a failure to assess.
+func TestAggregateNodeVerdict_MostlySkipped(t *testing.T) {
 	now := time.Now()
 	verdicts := []CheckVerdict{
 		{CheckID: "a", Severity: Pass, Timestamp: now},
@@ -302,14 +306,16 @@ func TestAggregateNodeVerdict_CompletionThreshold(t *testing.T) {
 		{CheckID: "d", Skipped: true, SkipReason: ArchitectureUnsupported, Timestamp: now},
 	}
 
-	// 1 of 4 completed = 25%, threshold is 50%
-	nv := AggregateNodeVerdict(verdicts, 0.5)
+	nv := AggregateNodeVerdict(verdicts)
 
-	if nv.OverallSeverity != Unknown {
-		t.Errorf("overall severity = %v, want UNKNOWN (below completion threshold)", nv.OverallSeverity)
+	if nv.OverallSeverity != Pass {
+		t.Errorf("overall severity = %v, want PASS", nv.OverallSeverity)
 	}
-	if nv.ExitCode() != 2 {
-		t.Errorf("exit code = %d, want 2", nv.ExitCode())
+	if len(nv.SkippedChecks) != 3 {
+		t.Errorf("skipped checks = %d, want 3", len(nv.SkippedChecks))
+	}
+	if nv.ExitCode() != 0 {
+		t.Errorf("exit code = %d, want 0", nv.ExitCode())
 	}
 }
 
@@ -320,16 +326,13 @@ func TestAggregateNodeVerdict_AllPass(t *testing.T) {
 		{CheckID: "b", Severity: Pass, Timestamp: now},
 	}
 
-	nv := AggregateNodeVerdict(verdicts, 0)
+	nv := AggregateNodeVerdict(verdicts)
 
 	if nv.OverallSeverity != Pass {
 		t.Errorf("overall severity = %v, want PASS", nv.OverallSeverity)
 	}
 	if nv.ExitCode() != 0 {
 		t.Errorf("exit code = %d, want 0", nv.ExitCode())
-	}
-	if nv.CompletionRatio != 1.0 {
-		t.Errorf("completion ratio = %f, want 1.0", nv.CompletionRatio)
 	}
 	if !nv.RecommendedAction.IsZero() {
 		t.Errorf("recommended action = %+v, want NoAction", nv.RecommendedAction)
@@ -417,7 +420,7 @@ func TestAggregateNodeVerdict_RecommendedAction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			nv := AggregateNodeVerdict(tt.verdicts, 0)
+			nv := AggregateNodeVerdict(tt.verdicts)
 			if nv.RecommendedAction != tt.want {
 				t.Errorf("recommended action = %+v, want %+v", nv.RecommendedAction, tt.want)
 			}
@@ -425,10 +428,11 @@ func TestAggregateNodeVerdict_RecommendedAction(t *testing.T) {
 	}
 }
 
-func TestAggregateNodeVerdict_RecommendedAction_UnknownGate(t *testing.T) {
+// TestAggregateNodeVerdict_RecommendedAction_MostlySkipped guards that
+// the one check that did complete still drives both severity and the
+// surfaced action, however many of its peers were skipped.
+func TestAggregateNodeVerdict_RecommendedAction_MostlySkipped(t *testing.T) {
 	now := time.Now()
-	// 1 of 4 completed = 25%, below the 50% threshold -> OverallSeverity
-	// is forced to Unknown, which no check carries, so no action surfaces.
 	verdicts := []CheckVerdict{
 		{CheckID: "a", Severity: Critical, RecommendedAction: Drain(DiagnosticActionContactSupport), Timestamp: now},
 		{CheckID: "b", Skipped: true, SkipReason: ArchitectureUnsupported, Timestamp: now},
@@ -436,13 +440,13 @@ func TestAggregateNodeVerdict_RecommendedAction_UnknownGate(t *testing.T) {
 		{CheckID: "d", Skipped: true, SkipReason: ArchitectureUnsupported, Timestamp: now},
 	}
 
-	nv := AggregateNodeVerdict(verdicts, 0.5)
+	nv := AggregateNodeVerdict(verdicts)
 
-	if nv.OverallSeverity != Unknown {
-		t.Fatalf("overall severity = %v, want UNKNOWN", nv.OverallSeverity)
+	if nv.OverallSeverity != Critical {
+		t.Fatalf("overall severity = %v, want CRITICAL", nv.OverallSeverity)
 	}
-	if !nv.RecommendedAction.IsZero() {
-		t.Errorf("recommended action = %+v, want NoAction under Unknown gate", nv.RecommendedAction)
+	if want := Drain(DiagnosticActionContactSupport); nv.RecommendedAction != want {
+		t.Errorf("recommended action = %+v, want %+v", nv.RecommendedAction, want)
 	}
 }
 

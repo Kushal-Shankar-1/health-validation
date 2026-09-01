@@ -106,8 +106,8 @@ func TestCollect_MissingSensorSurfacesAsSkip(t *testing.T) {
 	if sensorMissing == 0 {
 		t.Error("no SENSOR_MISSING skips; an uncollected domain is still invisible")
 	}
-	if nv.CompletionRatio != 0 {
-		t.Errorf("completion_ratio = %v, want 0; no check completed", nv.CompletionRatio)
+	if len(nv.CheckResults) != 0 {
+		t.Errorf("check_results = %+v, want none; no check completed", nv.CheckResults)
 	}
 }
 

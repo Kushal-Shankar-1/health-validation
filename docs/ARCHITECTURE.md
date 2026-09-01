@@ -53,7 +53,6 @@ To add a sensor for a new hardware domain: define a measurement struct in `catal
 | `catalog.WithExecutionContext(health.OperatorInfra)` | Checks that don't list this context are skipped with `SIGNAL_UNAVAILABLE_DEPLOYMENT_MODEL`. |
 | `catalog.WithDisabledChecks("check_id", ...)` | Named checks are skipped with `CHECK_DISABLED`. Built from a config file's `disabled_checks:` via `Config.DisabledCheckIDs()`. |
 | `catalog.WithOverrides(overrides)` | Applies operator threshold overrides. Built from a config file via `Config.Overrides()`. |
-| `catalog.WithCompletionThreshold(0.8)` | If fewer than 80% of checks complete, `overall_severity` is set to UNKNOWN. |
 
 ## Execution contexts
 
@@ -80,7 +79,6 @@ The `NodeVerdict` JSON is a versioned contract. Its `schema_version` field uses 
 | SeverityByDomain | map[Category]Severity | `severity_by_domain` | Worst severity per hardware category. |
 | CheckResults | []CheckVerdict | `check_results` | Per-check results for checks that ran. |
 | SkippedChecks | []CheckVerdict | `skipped_checks` | Per-check results for checks that were skipped. |
-| CompletionRatio | float64 | `completion_ratio` | Fraction of expected checks that completed. |
 | AffectedComponents | []AffectedComponent | `affected_components` | Non-PASS domains with their affected entities and check IDs. |
 | RecommendedAction | RecommendedAction | `recommended_action` | Node-level remediation object `{operational_state, diagnostic_action}` selected from the checks tying at `overall_severity`; elided (`omitzero`) when no action applies. |
 

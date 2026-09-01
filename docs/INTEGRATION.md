@@ -355,10 +355,10 @@ validate against the published
 - **`skipped_checks`** — checks that did **not** run, with a `skip_reason`
   (`THRESHOLD_UNCONFIGURED`, `CHECK_DISABLED`, `SENSOR_MISSING`, …).
   `SENSOR_MISSING` is the one to alert on: a whole domain reported nothing, so
-  those checks were never assessed — distinct from `CHECK_DISABLED`, which is
-  deliberate.
-  A PASS with many skips is **partial coverage**, not a clean bill of health —
-  check `skipped_checks` and `completion_ratio` if coverage matters to your gate.
+  those checks were never assessed — distinct from `CHECK_DISABLED` or
+  `SIGNAL_UNAVAILABLE_ARCHITECTURE`, which are deliberate. Skip *count* is not
+  a coverage signal, since most skips are by design; if coverage matters to
+  your gate, filter `skipped_checks` on `skip_reason`.
 
 Set `--node-id` to your scheduler/inventory identifier (it defaults to the
 hostname) so the verdict correlates with the rest of your fleet data.
@@ -381,7 +381,7 @@ A workable pattern:
 3. **Aggregate/query** there: index on `node_id`, `overall_severity`,
    `affected_components[].category`, and `check_results[].check_id` to answer
    "which nodes are draining and why," "which checks fire most across the
-   fleet," and "how coverage (`completion_ratio`) trends."
+   fleet," and "how `skipped_checks` reasons trend."
 
 Because a verdict is a point-in-time snapshot, store each run rather than
 overwriting — the history is what turns per-node gating into fleet insight.

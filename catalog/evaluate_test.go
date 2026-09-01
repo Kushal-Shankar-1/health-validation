@@ -250,11 +250,12 @@ func TestEvaluateAll_DisabledOutranksSensorMissing(t *testing.T) {
 	}
 }
 
-// A missing sensor's skips count toward the verdict's total but not its
-// completed checks, so CompletionRatio drops and a configured threshold
-// can push the node to UNKNOWN — the node was not fully assessed. Before
-// SENSOR_MISSING those checks vanished and the ratio read a perfect 1.
-func TestEvaluateAll_MissingSensorLowersCompletionRatio(t *testing.T) {
+// A check whose domain reported nothing is recorded as a SENSOR_MISSING
+// skip rather than vanishing from the verdict, so a consumer can tell
+// "not assessed" from "assessed and healthy". The checks that did run
+// still drive OverallSeverity: an unassessed domain is a coverage fact to
+// read off skip_reason, not a severity.
+func TestEvaluateAll_MissingSensorRecordsSkip(t *testing.T) {
 	present := health.CheckDefinition{
 		ID:                "node_present",
 		Category:          health.Node,
@@ -279,7 +280,6 @@ func TestEvaluateAll_MissingSensorLowersCompletionRatio(t *testing.T) {
 	cat := catalog.NewEmpty(
 		catalog.WithArchitecture(catalogtest.DummyArchitecture),
 		catalog.WithExecutionContext(health.OperatorInfra),
-		catalog.WithCompletionThreshold(0.75),
 	)
 	cat.MustRegister(present)
 	cat.MustRegister(absent)
@@ -288,11 +288,11 @@ func TestEvaluateAll_MissingSensorLowersCompletionRatio(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := nv.CompletionRatio, 0.5; got != want {
-		t.Errorf("CompletionRatio = %v, want %v", got, want)
+	if nv.OverallSeverity != health.Pass {
+		t.Errorf("OverallSeverity = %v, want PASS (from the check that ran)", nv.OverallSeverity)
 	}
-	if nv.OverallSeverity != health.Unknown {
-		t.Errorf("OverallSeverity = %v, want UNKNOWN (completion below threshold)", nv.OverallSeverity)
+	if len(nv.CheckResults) != 1 || nv.CheckResults[0].CheckID != "node_present" {
+		t.Errorf("check results = %+v, want the one check whose sensor reported", nv.CheckResults)
 	}
 	if len(nv.SkippedChecks) != 1 || nv.SkippedChecks[0].SkipReason != health.SensorMissing {
 		t.Errorf("skipped = %+v, want one SENSOR_MISSING", nv.SkippedChecks)
