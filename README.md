@@ -93,7 +93,7 @@ The check engine collects typed measurements from sensors, evaluates them agains
       "trace_id": "0c9a4b83-7e5d-4a11-93f6-2c8b5e1470af",
       "recommended_action": {
         "operational_state": "drain",
-        "diagnostic_action": "reboot"
+        "remediation_actions": ["reboot"]
       },
       "messages": [
         "Expected 4 GPUs, found 1."
@@ -141,7 +141,7 @@ The check engine collects typed measurements from sensors, evaluates them agains
       "trace_id": "0c9a4b83-7e5d-4a11-93f6-2c8b5e1470af",
       "recommended_action": {
         "operational_state": "drain",
-        "diagnostic_action": "restart_bm"
+        "remediation_actions": ["restart_bm", "contact_support"]
       },
       "messages": [
         "GPU Xid 79 detected: GPU has fallen off the bus."
@@ -154,10 +154,6 @@ The check engine collects typed measurements from sensors, evaluates them agains
     }
   ],
   "skipped_checks": [],
-  "recommended_action": {
-    "operational_state": "drain",
-    "diagnostic_action": "restart_bm"
-  },
   "overall_severity": "CRITICAL"
 }
 ```

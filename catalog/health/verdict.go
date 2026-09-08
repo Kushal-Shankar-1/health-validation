@@ -30,14 +30,14 @@ type CheckVerdict struct {
 	SpanID            string                       `json:"span_id"`  // Unique per check invocation.
 	TraceID           string                       `json:"trace_id"` // Shared by all checks in the same run.
 	SkipDetail        string                       `json:"skip_detail,omitempty"`
-	AffectedEntities  []string                     `json:"affected_entities,omitempty"`
 	Messages          []string                     `json:"messages,omitempty"`
+	AffectedEntities  []string                     `json:"affected_entities,omitempty"`
+	RecommendedAction RecommendedAction            `json:"recommended_action,omitzero"`
 	Severity          Severity                     `json:"severity"`
 	Category          Category                     `json:"category"`
 	ConditionScope    ConditionScope               `json:"condition_scope"` // Blast radius; NODE when collection failed.
 	SkipReason        SkipReason                   `json:"skip_reason,omitempty"`
 	MaturityLevel     MaturityLevel                `json:"maturity_level"`
-	RecommendedAction RecommendedAction            `json:"recommended_action,omitzero"`
 	Skipped           bool                         `json:"skipped"`
 	NVIDIAEndorsed    bool                         `json:"nvidia_endorsed"`
 }
@@ -63,26 +63,7 @@ type NodeVerdict struct {
 	AffectedComponents []AffectedComponent   `json:"affected_components,omitempty"`
 	CheckResults       []CheckVerdict        `json:"check_results"`
 	SkippedChecks      []CheckVerdict        `json:"skipped_checks,omitempty"`
-	RecommendedAction  RecommendedAction     `json:"recommended_action,omitzero"`
 	OverallSeverity    Severity              `json:"overall_severity"`
-}
-
-// pickNodeAction selects the single node-level RecommendedAction from
-// the checks that tie at the top severity. Among those candidates the
-// most urgent action wins: highest OperationalState first, then the
-// highest priority DiagnosticAction; see [RecommendedAction.outranks]. Returns
-// NoAction when no check matches top (e.g. all Pass).
-func pickNodeAction(verdicts []CheckVerdict, top Severity) RecommendedAction {
-	var action RecommendedAction
-	for _, v := range verdicts {
-		if v.Severity != top {
-			continue
-		}
-		if v.RecommendedAction.outranks(action) {
-			action = v.RecommendedAction
-		}
-	}
-	return action
 }
 
 // AffectedComponent summarizes a category with non-Pass results.
@@ -159,11 +140,6 @@ func AggregateNodeVerdict(verdicts []CheckVerdict) NodeVerdict {
 			domainEntities[v.Category] = append(domainEntities[v.Category], v.AffectedEntities...)
 		}
 	}
-
-	// The node-level action mirrors severity: it comes from the checks
-	// that tie at OverallSeverity, so the surfaced remediation always
-	// belongs to a check at the top tier.
-	nv.RecommendedAction = pickNodeAction(nv.CheckResults, nv.OverallSeverity)
 
 	for domain, sev := range nv.SeverityByDomain {
 		if sev > Pass {
