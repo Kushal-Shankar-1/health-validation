@@ -67,21 +67,24 @@ type RemediationAction string
 
 const (
 	RemediationActionContactSupport     RemediationAction = "contact_support"
-	RemediationActionReboot             RemediationAction = "reboot"
 	RemediationActionResetGPU           RemediationAction = "reset_gpu"
 	RemediationActionRestartApp         RemediationAction = "restart_app"
-	RemediationActionRestartBM          RemediationAction = "restart_bm"
-	RemediationActionRestartVM          RemediationAction = "restart_vm"
+	RemediationActionRestartOS          RemediationAction = "restart_os"
 	RemediationActionUpdateSWFW         RemediationAction = "update_swfw"
-	RemediationActionCheckMechanicals   RemediationAction = "check_mechanicals"
-	RemediationActionCheckNetwork       RemediationAction = "check_network"
 	RemediationActionCheckUVM           RemediationAction = "check_uvm"
 	RemediationActionWorkflowXid45      RemediationAction = "workflow_xid_45"
-	RemediationActionWorkflowXid48      RemediationAction = "workflow_xid_48"
 	RemediationActionWorkflowNVLinkErr  RemediationAction = "workflow_nvlink_err"
 	RemediationActionWorkflowNVLink5Err RemediationAction = "workflow_nvlink5_err"
 	RemediationActionXid154             RemediationAction = "xid_154"
-	RemediationActionRetestHardware     RemediationAction = "retest_hardware"
+
+	// RemediationActionHold marks a node as drained but not yet
+	// individually remediated: hold it out of scheduling until a
+	// threshold number of other nodes in the same NVLink/rack domain
+	// have also been held (3 is the recommended threshold), at which
+	// point the whole domain should be remediated together rather than
+	// node-by-node. Used for NVLink fabric/route faults that are more
+	// often a shared-switch problem than a single-node one.
+	RemediationActionHold RemediationAction = "hold"
 
 	// RemediationActionRetryCollection marks a verdict whose data could not
 	// be collected in time (a sensor timeout) rather than a confirmed
@@ -144,6 +147,17 @@ func (r RecommendedAction) MarshalJSON() ([]byte, error) {
 // should attempt them.
 func Drain(actions ...RemediationAction) RecommendedAction {
 	return RecommendedAction{OperationalState: OperationalDrain, RemediationActions: actions}
+}
+
+// GenericDrain returns the default remediation sequence for a fault with
+// no remediation-engine-confirmed bespoke handling: attempt a GPU-only
+// reset (the lightest-touch automated step some remediation engines take
+// before falling back to a host-level action; engines that don't
+// implement one simply no-op through it), then a host-level restart,
+// then escalate. Checks with confirmed engine-specific handling should
+// use [Drain] directly instead.
+func GenericDrain() RecommendedAction {
+	return Drain(RemediationActionResetGPU, RemediationActionRestartOS, RemediationActionContactSupport)
 }
 
 // Monitor is the canonical "keep in service, watch the trend"

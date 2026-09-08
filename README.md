@@ -92,8 +92,8 @@ The check engine collects typed measurements from sensors, evaluates them agains
       "span_id": "1a2f5c07-3b64-4e8d-9a70-5f1c2d8e46b3",
       "trace_id": "0c9a4b83-7e5d-4a11-93f6-2c8b5e1470af",
       "recommended_action": {
-        "operational_state": "drain",
-        "remediation_actions": ["reboot"]
+        "remediation_actions": ["reset_gpu", "restart_os", "contact_support"],
+        "operational_state": "drain"
       },
       "messages": [
         "Expected 4 GPUs, found 1."
@@ -140,8 +140,8 @@ The check engine collects typed measurements from sensors, evaluates them agains
       "span_id": "e57c190b-46d2-4c8a-a3f1-9b04d7e2635c",
       "trace_id": "0c9a4b83-7e5d-4a11-93f6-2c8b5e1470af",
       "recommended_action": {
-        "operational_state": "drain",
-        "remediation_actions": ["restart_bm", "contact_support"]
+        "remediation_actions": ["reset_gpu", "restart_os", "contact_support"],
+        "operational_state": "drain"
       },
       "messages": [
         "GPU Xid 79 detected: GPU has fallen off the bus."
@@ -379,12 +379,13 @@ to know what actually ran.
 ## Where to go for more
 
 1. [docs/INTEGRATION.md](docs/INTEGRATION.md): deploy to a GPU cluster, wire into the workload lifecycle, act on verdicts, collect results across the fleet
-2. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): package roles, data flow, adding checks and sensors
-3. [docs/EXTENDING.md](docs/EXTENDING.md): extend the catalog with your own private checks
-4. [docs/DEVELOPER.md](docs/DEVELOPER.md): build, CI, container images, publishing
-5. [docs/FAQ.md](docs/FAQ.md)
-6. [catalog/health/node-verdict.schema.json](catalog/health/node-verdict.schema.json): JSON Schema for the node verdict output
-7. [CONTRIBUTING.md](CONTRIBUTING.md)
+2. [docs/REMEDIATION.md](docs/REMEDIATION.md): the remediation action catalog and how to work through a check's remediation sequence
+3. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): package roles, data flow, adding checks and sensors
+4. [docs/EXTENDING.md](docs/EXTENDING.md): extend the catalog with your own private checks
+5. [docs/DEVELOPER.md](docs/DEVELOPER.md): build, CI, container images, publishing
+6. [docs/FAQ.md](docs/FAQ.md)
+7. [catalog/health/node-verdict.schema.json](catalog/health/node-verdict.schema.json): JSON Schema for the node verdict output
+8. [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Maintainers
 
