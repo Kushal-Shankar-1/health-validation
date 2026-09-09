@@ -4,11 +4,12 @@ import { themes as prismThemes } from "prism-react-renderer";
 
 const config: Config = {
   title: "health-validation",
-  tagline: "Go Health Documentation",
-  favicon: "img/favicon.ico",
+  tagline: "Hardware health check catalog and evaluation engine for NVIDIA GPU nodes",
 
-  url: "https://dsx-ai-factory.github.io",
-  baseUrl: "/health-validation/",
+  // Set from the live Pages site by the Pages workflow; the fallbacks are for
+  // local builds. See the Documentation Site section of docs/DEVELOPER.md.
+  url: process.env.DOCS_URL || "https://dsx-ai-factory.github.io",
+  baseUrl: process.env.DOCS_BASE_URL || "/",
 
   onBrokenLinks: "throw",
 

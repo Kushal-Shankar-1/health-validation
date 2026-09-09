@@ -5,7 +5,7 @@ For build setup, test commands, and contribution workflow, see
 
 ## Prerequisites
 
-- Go ≥ 1.23
+- Go ≥ 1.27
 - Bazel ≥ 9 (pinned version in `.bazelversion`)
 - Linux for NVML-dependent targets (`toolkit/nvml/`); macOS works for catalog and CLI logic
 
@@ -67,6 +67,35 @@ first. Then update the toolkit `require` directive to that catalog version,
 test the combined modules, and tag the toolkit release. This policy defines
 tag and compatibility semantics only. The repository does not currently
 provide automatic release stamping or publishing.
+
+## Documentation Site
+
+`docs/` is a Docusaurus site, built through Bazel rather than pnpm directly:
+
+```bash
+bazel run //docs:serve    # live preview on http://localhost:3000/
+bazel build //docs:build  # one-shot build into bazel-bin/docs/build
+```
+
+Most reference content is generated rather than authored, by two separate
+paths. `//catalog/cmd/gencheckpages:pages` reads the `Category` enum from
+`//catalog/health:schema` and writes one MDX page per category. The checks
+themselves never pass through it: `//catalog/cmd/healthdump:checks` lands as
+`static/data/checks.json`, which the `health-data` plugin loads and the
+`CheckCatalog` component renders into those pages at build time. Either way,
+editing a check in `catalog/` changes the published docs. `//docs:test` builds
+the whole site and is part of `//...`, so a broken site fails `bazel test //...`.
+
+Pushes to `main` are wired to publish the site to GitHub Pages via
+[`.github/workflows/pages.yml`](../.github/workflows/pages.yml), which also has a
+`workflow_dispatch` trigger for republishing on demand. Pages is enabled on this
+repository with Source set to GitHub Actions.
+
+The workflow takes `url` and `baseUrl` from `actions/configure-pages`, so the
+site is built for wherever GitHub serves it: a generated access-controlled
+subdomain while the repository is internal, and
+https://dsx-ai-factory.github.io/health-validation/ once it is public. Going
+public needs no change here.
 
 ## Linux-only Code
 
