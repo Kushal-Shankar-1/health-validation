@@ -16,10 +16,9 @@ import (
 //
 // Group 1 is the timestamp, group 2 the interface (the token immediately
 // before ": Link"), group 3 the up/down state. It does not require an
-// "rdma" token the way the source check's journalctl prefilter did —
-// that prefilter did not match the netdev-style link lines the driver
-// actually logs (nor the source's own test fixtures); the parser stays
-// permissive and lets the collector's grep bound what it sees.
+// "rdma" token — the netdev-style link lines the driver actually logs
+// don't carry one; the parser stays permissive and lets the collector's
+// grep bound what it sees.
 var linkFlapLineRE = regexp.MustCompile(`(?i)(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*?\bmlx5_core\b.*?(\S+): Link (up|down)\b`)
 
 // linkFlapTimeLayout parses the short-full timestamp. The zone token that
@@ -41,9 +40,9 @@ type linkEvent struct {
 // outage's length in seconds. Each up recovers one outage, so consecutive
 // downs before an up (e.g. a reset re-emitting "down" with no intervening
 // "up") collapse into a single outage from the first down; a down with no
-// following up (an unrecovered link) is not paired. This differs from the
-// dca-health-checks source, which pairs every down with the same up and so
-// double-counts one continuous outage. Lines that do not parse are skipped.
+// following up (an unrecovered link) is not paired. This deliberately
+// avoids pairing every down with the same up, which would double-count
+// one continuous outage. Lines that do not parse are skipped.
 // The measurement always has meaning even with zero outages, which a check
 // reads as "no fatal link flaps observed".
 func ParseLinkFlaps(since string, lines []string) infiniband.LinkFlapMeasurement {

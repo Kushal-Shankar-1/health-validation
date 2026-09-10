@@ -14,14 +14,12 @@ import (
 )
 
 // linkFlapGrep is the journalctl --grep prefilter for mlx5 link
-// transitions. It is deliberately looser than the source check's
-// `mlx5_core .* rdma.*: Link (up|down)` — that pattern required an "rdma"
-// token the driver's netdev link lines do not carry — so real outages
+// transitions. It deliberately does not require an "rdma" token —
+// the driver's netdev link lines do not carry one — so real outages
 // are collected; the parser does the exact structuring.
 const linkFlapGrep = `(?i)mlx5_core .* Link (up|down)`
 
-// Defaults mirror the dca-health-checks sw_sys_logs_rdma_linkflap_fatal
-// config: a 1-hour lookback and no boot offset.
+// Defaults: a 1-hour lookback and no boot offset.
 const (
 	defaultLinkFlapLookback   = time.Hour
 	defaultLinkFlapBootOffset = time.Duration(0)
@@ -46,9 +44,8 @@ type RDMALinkFlapBackend interface {
 type RDMALinkFlapOption func(*rdmaLinkFlapBackend)
 
 // WithLinkFlapLookback bounds the read to the last d of the current boot
-// (default 1h), mirroring the source check's lookback: only outages within
-// the window count, so a flap from early in a long-lived boot does not
-// perpetually fail the check.
+// (default 1h): only outages within the window count, so a flap from
+// early in a long-lived boot does not perpetually fail the check.
 func WithLinkFlapLookback(d time.Duration) RDMALinkFlapOption {
 	return func(b *rdmaLinkFlapBackend) {
 		if d < 0 {
@@ -59,10 +56,10 @@ func WithLinkFlapLookback(d time.Duration) RDMALinkFlapOption {
 	}
 }
 
-// WithLinkFlapBootOffset ignores link events logged within d of boot,
-// mirroring the source check's boot_offset. A host is unstable right after
-// boot and the flaps it logs then are not actionable, so the effective start
-// of the window is pushed forward by d. Default 0 (no offset).
+// WithLinkFlapBootOffset ignores link events logged within d of boot.
+// A host is unstable right after boot and the flaps it logs then are not
+// actionable, so the effective start of the window is pushed forward by
+// d. Default 0 (no offset).
 func WithLinkFlapBootOffset(d time.Duration) RDMALinkFlapOption {
 	return func(b *rdmaLinkFlapBackend) {
 		if d < 0 {
