@@ -128,7 +128,6 @@ they're not Xid-specific.)
 | `update_swfw` | Update GPU driver/firmware and any related system software to the latest supported versions. Recommended for Xid 78 (vGPU start error). |
 | `check_uvm` | If Unified Virtual Memory or vGPU is in use, reset the GPU; otherwise no hardware action is warranted. Recommended for Xid 159 (CHI non-data error). |
 | `workflow_xid_45` | Follow the Xid 45 (preemptive GPU removal) workflow: restart the fabric manager if the node is solo; otherwise this Xid typically accompanies another Xid and that Xid's guidance applies instead. |
-| `workflow_nvlink_err` | Follow the NVLink error workflow for the accompanying Xid (74): decode the hex register values in the error message to determine the specific NVLink remediation. |
 | `workflow_nvlink5_err` | Follow the NVLink5 error workflow for the accompanying Xid (144–150): decode the hex register values in the error message to determine the specific NVLink remediation. |
 | `xid_154` | Informational: Xid 154 (GPU recovery action changed) always accompanies another Xid and has no remediation of its own — follow that other Xid's guidance. |
 
