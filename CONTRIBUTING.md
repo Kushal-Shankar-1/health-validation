@@ -67,7 +67,31 @@ bazel run //tools/gazelle
 # Go mod tidy (repo has two modules: catalog/ and toolkit/)
 (cd catalog && go mod tidy)
 (cd toolkit && go mod tidy)
+
+# Check NOTICE is up to date with actual Go dependencies (see "Updating
+# NOTICE" below)
+bazel run //tools:check_notice
 ```
+
+### Updating NOTICE
+
+`NOTICE` lists the third-party Go modules this repo compiles, each with
+its version, license, and upstream URL. `tools/check_notice.py` gates it
+in CI. Bazel supplies Go, Python, and syft, so nothing needs installing.
+
+After changing dependencies:
+
+```bash
+bazel run //tools:check_notice              # check
+bazel run //tools:check_notice -- --write   # fix, then review the diff
+```
+
+`--write` is authoritative for versions and URLs, and leaves existing
+`License:` values alone. A module new to NOTICE gets syft's
+classification, or `UNKNOWN` if syft found none. Verify that value
+against the module's own `LICENSE`/`COPYING` under
+`$(go env GOMODCACHE)/<module>@<version>/` before committing — license
+classifiers err in both directions. Join multiple licenses with `AND`.
 
 > **Linux only:** The `toolkit/nvml/` package requires cgo and
 > `libnvidia-ml.so.1`. On macOS, the NVML backend stubs out and `go test
