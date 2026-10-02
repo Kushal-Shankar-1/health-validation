@@ -380,6 +380,88 @@ skipped checks are excluded from `overall_severity`, a disable narrows the
 minimum bar the node is held to — read `skipped_checks`, not just the exit code,
 to know what actually ran.
 
+### Publishing metrics
+
+The same config file can push the verdict to an OTLP/HTTP metrics endpoint —
+a collector running on the node, or a remote one:
+
+```yaml
+# operator.yaml
+metrics:
+  enabled: true
+  endpoint: http://127.0.0.1:44318   # full URL, not the collector's host:port form
+  timeout_seconds: 10                # optional; defaults to 10
+  headers:                           # optional; for an endpoint that authenticates
+    x-api-key: ${SECRET}
+  resource_attributes:               # optional; fleet context on every metric
+    cluster: dsx-east
+```
+
+`endpoint` is a full URL. An OTLP collector's own receiver config writes
+`127.0.0.1:44318`, so that form is the easy mistake — it is rejected at load
+time with the fix spelled out. A URL with no path gets `/v1/metrics` appended;
+an explicit path is used as given. `https` enables TLS.
+
+Six metrics are published per run:
+
+| Metric | Type | Value | Attributes |
+|---|---|---|---|
+| `health_validation.node.severity` | gauge | `1`/`0` | `severity` |
+| `health_validation.domain.severity` | gauge | `1`/`0` | `severity`, `category` |
+| `health_validation.check.severity` | gauge | `1`/`0` | `severity`, `check_id`, `category`, `condition_scope`, `maturity_level`, `nvidia_endorsed` |
+| `health_validation.check.skipped` | gauge | Always `1`, one per skipped check | `check_id`, `category`, `skip_reason` |
+| `health_validation.check.affected_entities` | gauge | Count of distinct entities a check named | `check_id`, `category` |
+| `health_validation.runs` | counter (delta) | `1` | `severity` |
+
+The three severity gauges carry the severity as a **name** — `PASS`, `INFO`,
+`WARNING`, `CRITICAL`, `UNKNOWN` — rather than encoding it as a number to
+decode. Each run reports all five for every subject: `1` for the severity in
+effect and `0` for the other four. So a critical node is
+
+```
+health_validation_node_severity{severity="CRITICAL"} 1
+health_validation_node_severity{severity="PASS"}     0
+```
+
+and alerting on it is `health_validation_node_severity{severity="CRITICAL"} == 1`.
+
+Emitting the zeros matters: if only the severity in effect were reported, the
+previous run's `severity="CRITICAL"` point would sit at `1` with nothing to
+contradict it, and a node that had recovered would keep reading as critical.
+
+A check that runs per entity — most GPU and NVLink checks — produces one result
+per GPU, so `check.severity` reports the **worst** severity across them and
+`check.affected_entities` counts the distinct entities named. One failing GPU
+therefore shows as a failing check; which GPU it was is in the JSON verdict's
+`affected_entities`, not in the metrics.
+
+Node identity and versions ride on the OTLP **resource**
+(`service.name`, `service.version`, `service.instance.id` = the node ID, plus
+`health_validation.catalog_version` and `health_validation.schema_version`), not
+on each data point. The per-run `trace_id` and `span_id` are deliberately not
+published — they are unique every run and would mint a new time series per
+execution; read them from the JSON verdict instead.
+
+Publishing never changes the verdict or the exit code: an unreachable collector
+is logged as a warning and the run reports exactly what it would have reported
+otherwise. The verdict JSON is written to stdout before the push, so a slow
+collector cannot delay it.
+
+Where the metrics go and what is sent with them comes only from this config.
+The OTLP exporter reads `OTEL_EXPORTER_OTLP_*` from the environment and applies
+it *before* the options it is given, so every setting carrying a destination or
+credentials — endpoint, headers, timeout, compression — is passed explicitly,
+empty values included, to overwrite whatever the node's environment holds. A
+stray `OTEL_EXPORTER_OTLP_HEADERS` cannot attach another endpoint's credentials
+to yours. TLS trust material (`OTEL_EXPORTER_OTLP_CERTIFICATE` and the
+client-certificate variables) is the deliberate exception, still read from the
+environment: it is the only way to reach a collector behind a private CA, and
+this config has no field for it.
+
+> Running in a container? The stock wrapper does not use host networking, so
+> `127.0.0.1` inside the container is not the node's loopback. See
+> [docs/INTEGRATION.md](docs/INTEGRATION.md#publishing-metrics-from-a-container).
+
 ## Where to go for more
 
 1. [docs/INTEGRATION.md](docs/INTEGRATION.md): deploy to a GPU cluster, wire into the workload lifecycle, act on verdicts, collect results across the fleet
