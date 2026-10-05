@@ -12,6 +12,75 @@ option go_package = "github.com/dsx-ai-factory/health-validation/collect/proto/g
 message ObservationBatch {
   string collection_id = 1;
   repeated Observation observations = 2;
+  HardwareInventory inventory = 3;
+}
+
+// HardwareInventory carries structured entity information separately from
+// metric and event observations. Additional inventory domains can be added
+// without representing their records as scalar signals.
+message HardwareInventory {
+  // One snapshot per source that collected GPU inventory. An absent snapshot
+  // means GPU inventory was not collected from that source.
+  repeated GpuInventorySnapshot gpu_snapshots = 1;
+}
+
+// GpuInventorySnapshot is one source's GPU inventory contribution for this
+// collection cycle. A snapshot error means GPU enumeration failed.
+// Once enumerated, inventory retains every GPU, including failed UUID reads.
+// An inventory with no entries means the source found no GPUs.
+message GpuInventorySnapshot {
+  string source = 1;
+  google.protobuf.Timestamp collected_at = 2;
+
+  oneof outcome {
+    GpuInventory inventory = 3;
+    CollectionError collection_error = 4;
+  }
+}
+
+// GpuInventory contains the per-GPU results of a successful enumeration.
+message GpuInventory {
+  repeated GpuInventoryEntry entries = 1;
+}
+
+// GpuInventoryEntry preserves every enumerated source-local GPU. A failed
+// GPU information lookup affects only that entry; healthy GPUs remain in
+// the same inventory snapshot.
+message GpuInventoryEntry {
+  // The GPU index assigned by this snapshot's source.
+  uint32 source_index = 1;
+
+  // Known identity and successfully read attributes, including partial records.
+  GpuDevice gpu = 2;
+  // GPU unavailable (e.g. Lost), or enrichment query failure.
+  // Known identity and available attributes are still retained in gpu.
+  CollectionError collection_error = 3;
+
+  // Errors for attempted attributes, keyed by GpuDevice proto field name
+  // (e.g. "bus_id"). May accompany gpu; an errored field has no value.
+  // An absent value without an error means the attribute was not attempted.
+  map<string, CollectionError> field_errors = 4;
+}
+
+// GpuDevice contains the inventory attributes of one GPU.
+// Available attributes are retained even if UUID or another attribute fails.
+// Consult the entry field_errors for attempted attributes without a value.
+message GpuDevice {
+  optional string uuid = 1;
+  optional string model = 2;
+  optional string serial = 3;
+  optional string bus_id = 4;
+  optional string brand = 5;
+  optional string vbios_version = 6;
+  optional string chassis_serial = 7;
+  optional int64 minor_number = 8;
+  optional string fabric_cluster_uuid = 9;
+  optional uint32 fabric_clique_id = 10;
+  optional uint32 compute_capability_major = 11;
+  optional uint32 compute_capability_minor = 12;
+  optional uint64 framebuffer_total_bytes = 13;
+  optional string driver_version = 14;
+  optional string cuda_driver_version = 15;
 }
 
 message Observation {

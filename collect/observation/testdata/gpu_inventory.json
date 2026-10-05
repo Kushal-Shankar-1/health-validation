@@ -1,0 +1,61 @@
+{
+  "collectionId": "collection-123",
+  "inventory": {
+    "gpuSnapshots": [
+      {
+        "source": "dcgm",
+        "collectedAt": "2026-09-23T19:00:00Z",
+        "inventory": {
+          "entries": [
+            {
+              "sourceIndex": 0,
+              "gpu": {
+                "uuid": "GPU-123",
+                "model": "H100",
+                "serial": "032451000001",
+                "busId": "0000:31:00.0",
+                "brand": "NVIDIA",
+                "vbiosVersion": "96.00.00.00.01",
+                "chassisSerial": "chassis-example",
+                "minorNumber": "0",
+                "fabricClusterUuid": "cluster-example",
+                "fabricCliqueId": 0,
+                "computeCapabilityMajor": 9,
+                "computeCapabilityMinor": 0,
+                "framebufferTotalBytes": "85899345920",
+                "driverVersion": "550.54.14",
+                "cudaDriverVersion": "12.4"
+              }
+            },
+            {
+              "sourceIndex": 1,
+              "collectionError": {
+                "source": "dcgm",
+                "operation": "inventory",
+                "category": "COLLECTION_ERROR_CATEGORY_SOURCE_ERROR",
+                "sourceError": "DCGM_ST_GENERIC_ERROR",
+                "detail": "GPU static information is unavailable"
+              }
+            },
+            {
+              "sourceIndex": 2,
+              "gpu": {
+                "uuid": "GPU-789",
+                "model": "H100"
+              },
+              "fieldErrors": {
+                "serial": {
+                  "source": "dcgm",
+                  "operation": "inventory",
+                  "category": "COLLECTION_ERROR_CATEGORY_UNAVAILABLE",
+                  "sourceError": "DCGM_FT_BLANK",
+                  "detail": "Serial has no data yet"
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

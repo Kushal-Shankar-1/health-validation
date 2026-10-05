@@ -4,8 +4,11 @@
 package observation
 
 import (
+	"os"
 	"strings"
 	"testing"
+
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func TestGPURefNamesAndFallback(t *testing.T) {
@@ -158,11 +161,147 @@ func TestValidateBatchReportsInvalidObservation(t *testing.T) {
 	}
 }
 
+func TestGPUInventoryExample(t *testing.T) {
+	data, err := os.ReadFile("testdata/gpu_inventory.json")
+	if err != nil {
+		t.Fatalf("read GPU inventory example: %v", err)
+	}
+
+	batch := &ObservationBatch{}
+	if unmarshalErr := protojson.Unmarshal(data, batch); unmarshalErr != nil {
+		t.Fatalf("unmarshal GPU inventory example: %v", unmarshalErr)
+	}
+
+	snapshots := batch.GetInventory().GetGpuSnapshots()
+	if len(snapshots) != 1 {
+		t.Fatalf("GPU snapshots = %d, want 1", len(snapshots))
+	}
+	snapshot := snapshots[0]
+	if snapshot.GetSource() != "dcgm" {
+		t.Fatalf("snapshot source = %q, want %q", snapshot.GetSource(), "dcgm")
+	}
+	entries := snapshot.GetInventory().GetEntries()
+	if len(entries) != 3 {
+		t.Fatalf("GPU entries = %d, want 3", len(entries))
+	}
+	if snapshot.GetCollectedAt() == nil {
+		t.Fatal("GPU snapshot collection time is absent")
+	}
+	if entries[0].GetSourceIndex() != 0 || entries[0].GetGpu().GetUuid() != "GPU-123" {
+		t.Fatalf("first GPU entry = %v, want source index 0 and UUID GPU-123", entries[0])
+	}
+	gpu := entries[0].GetGpu()
+	if gpu.GetBusId() != "0000:31:00.0" || gpu.GetMinorNumber() != 0 || gpu.MinorNumber == nil ||
+		gpu.GetFabricCliqueId() != 0 || gpu.FabricCliqueId == nil ||
+		gpu.GetComputeCapabilityMajor() != 9 || gpu.GetFramebufferTotalBytes() != 85899345920 ||
+		gpu.GetDriverVersion() != "550.54.14" || gpu.GetCudaDriverVersion() != "12.4" {
+		t.Fatalf("GPU inventory lost fleet-required fields: %v", gpu)
+	}
+	if entries[1].GetSourceIndex() != 1 || entries[1].GetCollectionError() == nil {
+		t.Fatalf("second GPU entry = %v, want source index 1 and collection error", entries[1])
+	}
+	if entries[2].GetGpu().GetUuid() != "GPU-789" || entries[2].GetFieldErrors()["serial"].GetSourceError() != "DCGM_FT_BLANK" {
+		t.Fatalf("partial inventory lost: %+v", entries[2])
+	}
+	encoded, err := protojson.Marshal(batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip := &ObservationBatch{}
+	if err := protojson.Unmarshal(encoded, roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateBatch(roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateBatch(batch); err != nil {
+		t.Fatalf("ValidateBatch() error = %v", err)
+	}
+}
+
+func TestValidateGPUInventoryEntry(t *testing.T) {
+	gpuUUID := "GPU-0"
+	failure := &CollectionError{Category: CollectionErrorCategoryUnavailable}
+	tests := []struct {
+		entry     *GPUInventoryEntry
+		name      string
+		wantError bool
+	}{
+		{entry: &GPUInventoryEntry{Gpu: &GPUDevice{Uuid: &gpuUUID}}, name: "GPU"},
+		{entry: &GPUInventoryEntry{CollectionError: failure}, name: "read failure"},
+		{entry: &GPUInventoryEntry{Gpu: &GPUDevice{Uuid: &gpuUUID}, CollectionError: failure}, name: "identity survives read failure"},
+		{entry: &GPUInventoryEntry{Gpu: &GPUDevice{Uuid: &gpuUUID}, FieldErrors: map[string]*CollectionError{"serial": failure}}, name: "partial attributes"},
+		{entry: &GPUInventoryEntry{Gpu: &GPUDevice{}, FieldErrors: map[string]*CollectionError{"future_field": failure}}, name: "forward compatible error"},
+		{entry: &GPUInventoryEntry{Gpu: &GPUDevice{Uuid: &gpuUUID}, FieldErrors: map[string]*CollectionError{"uuid": failure}}, name: "value and error conflict", wantError: true},
+		{entry: &GPUInventoryEntry{Gpu: &GPUDevice{}, FieldErrors: map[string]*CollectionError{"serial": nil}}, name: "nil field error", wantError: true},
+		{entry: &GPUInventoryEntry{Gpu: &GPUDevice{}, FieldErrors: map[string]*CollectionError{"": failure}}, name: "empty field name", wantError: true},
+		{entry: &GPUInventoryEntry{}, name: "missing result", wantError: true},
+		{name: "nil entry", wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateGPUInventoryEntry(test.entry); (err != nil) != test.wantError {
+				t.Fatalf("validation = %v, want error %v", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestValidateBatchRequiresGPUInventoryOutcome(t *testing.T) {
+	tests := []struct {
+		snapshot  *GPUInventorySnapshot
+		name      string
+		wantError string
+	}{
+		{
+			name: "empty successful inventory",
+			snapshot: &GPUInventorySnapshot{Source: "dcgm", Outcome: &GPUInventorySnapshot_Inventory{
+				Inventory: &GPUInventory{},
+			}},
+		},
+		{
+			name: "collection error",
+			snapshot: &GPUInventorySnapshot{Source: "dcgm", Outcome: &GPUInventorySnapshot_CollectionError{
+				CollectionError: &CollectionError{Category: CollectionErrorCategoryUnavailable},
+			}},
+		},
+		{
+			name:      "inventory outcome without payload",
+			snapshot:  &GPUInventorySnapshot{Source: "dcgm", Outcome: &GPUInventorySnapshot_Inventory{}},
+			wantError: `source "dcgm" has an inventory outcome with no payload`,
+		},
+		{
+			name:      "collection error outcome without payload",
+			snapshot:  &GPUInventorySnapshot{Source: "dcgm", Outcome: &GPUInventorySnapshot_CollectionError{}},
+			wantError: `source "dcgm" has a collection-error outcome with no payload`,
+		},
+		{name: "missing outcome", snapshot: &GPUInventorySnapshot{Source: "dcgm"}, wantError: `source "dcgm" has no outcome`},
+		{name: "nil snapshot", wantError: "snapshot is required"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateBatch(&ObservationBatch{Inventory: &HardwareInventory{
+				GpuSnapshots: []*GPUInventorySnapshot{test.snapshot},
+			}})
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatalf("ValidateBatch() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("ValidateBatch() error = %v, want text %q", err, test.wantError)
+			}
+		})
+	}
+}
+
 func TestNewCollectionErrorObservationOwnsFailure(t *testing.T) {
 	unit := "1"
 	failure := &CollectionError{
 		Category: CollectionErrorCategoryUnavailable,
-		Detail:   "device unavailable",
+		Detail:   "gpu unavailable",
 	}
 
 	first := NewCollectionErrorObservation("gpu.test", &unit, "dcgm", "metrics", nil, nil, failure)
@@ -182,7 +321,7 @@ func TestNewCollectionErrorObservationOwnsFailure(t *testing.T) {
 	}
 
 	firstFailure.Detail = "changed"
-	if secondFailure.GetDetail() != "device unavailable" {
+	if secondFailure.GetDetail() != "gpu unavailable" {
 		t.Fatalf("mutating first error changed second error to %q", secondFailure.GetDetail())
 	}
 }

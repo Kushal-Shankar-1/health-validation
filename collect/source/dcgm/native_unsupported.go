@@ -11,17 +11,21 @@ type unsupportedNative struct{}
 
 func newNative(StandaloneOptions) nativeAPI { return unsupportedNative{} }
 
-func (unsupportedNative) Init() (func(), error)             { return nil, unsupportedError() }
-func (unsupportedNative) SupportedDevices() ([]uint, error) { return nil, unsupportedError() }
-func (unsupportedNative) DeviceUUID(uint) (string, error) {
-	return "", unsupportedError()
+func (unsupportedNative) Init() (func(), error)          { return nil, unsupportedError() }
+func (unsupportedNative) AllGPUIndices() ([]uint, error) { return nil, unsupportedError() }
+func (unsupportedNative) ReadGPUUUIDs([]uint) (map[uint]GPUIdentityEntry, error) {
+	return nil, unsupportedError()
+}
+
+func (unsupportedNative) ReadGPUInventory([]uint) (map[uint]*observation.GPUInventoryEntry, error) {
+	return nil, unsupportedError()
 }
 
 func (unsupportedNative) WatchMetrics([]string) (func() error, error) {
 	return nil, unsupportedError()
 }
 
-func (unsupportedNative) ReadMetrics(uint, []string) (map[string]FieldValue, error) {
+func (unsupportedNative) ReadGPUMetrics(uint, []string) (map[string]FieldValue, error) {
 	return nil, unsupportedError()
 }
 
