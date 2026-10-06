@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "nvml",
@@ -13,5 +13,18 @@ go_library(
         "//collect/source/nvml/device",
         "//collect/source/nvml/lib",
         "@com_github_nvidia_go_nvml//pkg/nvml",
+    ],
+)
+
+go_test(
+    name = "nvml_test",
+    srcs = ["instance_test.go"],
+    embed = [":nvml"],
+    deps = [
+        "//collect/source/nvml/device",
+        "//collect/source/nvml/lib",
+        "@com_github_nvidia_go_nvml//pkg/nvml",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
     ],
 )

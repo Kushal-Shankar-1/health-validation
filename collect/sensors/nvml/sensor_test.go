@@ -5,8 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/dsx-ai-factory/health-validation/collect"
 	"github.com/dsx-ai-factory/health-validation/collect/observation"
+	nvmlsource "github.com/dsx-ai-factory/health-validation/collect/source/nvml"
 	"github.com/dsx-ai-factory/health-validation/collect/source/nvml/device"
 )
 
@@ -14,14 +17,21 @@ type fakeInstance struct {
 	devices    map[string]device.Device
 	initErr    error
 	refreshErr error
+	readErr    error
 	exists     bool
 	refreshed  bool
 }
 
 func (f *fakeInstance) NVMLExists() bool                  { return f.exists }
 func (f *fakeInstance) Devices() map[string]device.Device { return f.devices }
-func (f *fakeInstance) Shutdown() error                   { return nil }
-func (f *fakeInstance) InitError() error                  { return f.initErr }
+func (f *fakeInstance) Read(read func(map[string]device.Device) error) error {
+	if f.readErr != nil {
+		return f.readErr
+	}
+	return read(f.devices)
+}
+func (f *fakeInstance) Shutdown() error  { return nil }
+func (f *fakeInstance) InitError() error { return f.initErr }
 
 func (f *fakeInstance) Refresh() error {
 	f.refreshed = true
@@ -92,9 +102,9 @@ func TestMeasureRefresh(t *testing.T) {
 			}
 
 			if test.wantNoTargets {
-				if len(batch.Observations) != len(temperatureSignals()) {
+				if len(batch.Observations) != len(sensor.Signals()) {
 					t.Fatalf("Measure() emitted %d observations, want one per signal (%d)",
-						len(batch.Observations), len(temperatureSignals()))
+						len(batch.Observations), len(sensor.Signals()))
 				}
 				for _, current := range batch.Observations {
 					if current.GetTarget() != nil {
@@ -106,9 +116,9 @@ func TestMeasureRefresh(t *testing.T) {
 				}
 				return
 			}
-			if len(batch.Observations) != len(temperatureSignals()) {
+			if len(batch.Observations) != len(sensor.Signals()) {
 				t.Fatalf("Measure() emitted %d observations, want one per signal (%d)",
-					len(batch.Observations), len(temperatureSignals()))
+					len(batch.Observations), len(sensor.Signals()))
 			}
 			for _, obs := range batch.Observations {
 				failure := obs.GetCollectionError()
@@ -137,5 +147,43 @@ func TestRejectGPUInventory(t *testing.T) {
 	_, err := New(&fakeInstance{exists: true}).Measure(context.Background(), collect.WithGPUInventory())
 	if err == nil {
 		t.Fatal("Measure() accepted unsupported GPU inventory request")
+	}
+}
+
+// A concurrent successful Refresh can clear InitError between sensor reads.
+type recoveringInstance struct {
+	fakeInstance
+	errorReads int
+}
+
+func (f *recoveringInstance) InitError() error {
+	f.errorReads++
+	if f.errorReads == 1 {
+		return errors.New("enumeration failed")
+	}
+	return nil
+}
+
+func TestMeasureConcurrentRecovery(t *testing.T) {
+	inst := &recoveringInstance{fakeInstance: fakeInstance{exists: true}}
+	sensor := New(inst)
+	batch, err := sensor.Measure(context.Background())
+	require.NoError(t, err)
+	require.Len(t, batch.Observations, len(sensor.Signals()))
+	for _, obs := range batch.Observations {
+		failure := obs.GetCollectionError()
+		require.Equal(t, observation.CollectionErrorCategoryUnavailable, failure.GetCategory())
+		require.Equal(t, "enumeration failed", failure.GetDetail())
+	}
+	require.Equal(t, 1, inst.errorReads)
+}
+
+func TestClosedInstanceUnavailable(t *testing.T) {
+	s := New(&fakeInstance{exists: true, readErr: nvmlsource.ErrClosed})
+	batch, err := s.Measure(context.Background())
+	require.NoError(t, err)
+	require.NotEqualValues(t, 0, len(batch.GetObservations()))
+	for _, obs := range batch.GetObservations() {
+		require.Equal(t, observation.CollectionErrorCategoryUnavailable, obs.GetCollectionError().GetCategory())
 	}
 }

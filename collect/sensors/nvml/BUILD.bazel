@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "doc.go",
         "observe.go",
+        "power.go",
         "sensor.go",
         "temperature.go",
     ],
@@ -24,6 +25,8 @@ go_library(
 go_test(
     name = "nvml_test",
     srcs = [
+        "cycle_test.go",
+        "power_test.go",
         "sensor_test.go",
         "temperature_test.go",
     ],
@@ -32,8 +35,11 @@ go_test(
         "//collect",
         "//collect/observation",
         "//collect/signals/gpu",
+        "//collect/source/nvml",
         "//collect/source/nvml/device",
         "@com_github_nvidia_go_nvml//pkg/nvml",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
         "@org_golang_google_protobuf//types/known/timestamppb",
     ],
 )
