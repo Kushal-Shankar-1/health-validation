@@ -171,7 +171,7 @@ The dependency direction is strict: `catalog → (nothing)`, `toolkit → catalo
 
 **`catalog/internal/evaluation/`** — orchestrates a single check evaluation: filters by architecture/context, resolves threshold overrides, calls CEL, returns `CheckVerdict`.
 
-**`toolkit/`** — integration layer for consumers. Defines `Sensor`, the per-domain backend interfaces, `Collect()` (runs sensors → evaluates catalog → node verdict), the `SysfsCPU` file backend, the `Journalctl` command backend, and mock helpers for testing.
+**`toolkit/`** — integration layer for consumers. Defines `Sensor`, the per-domain backend interfaces, `Collect()` (runs sensors → evaluates catalog → node verdict), the deprecated `SysfsCPU` file backend (the CLI collects CPU through `collect/sensors/cpu`), the `Journalctl` command backend, and mock helpers for testing.
 
 #### Data flow
 
@@ -197,7 +197,7 @@ The binary's exit code is a coarse health signal set by `toolkit/app`: 0 for PAS
 Two distinct concepts in `toolkit/`:
 
 - **Sensor** — implements `toolkit.Sensor`, holds a backend, and produces `[]health.Measurement` for `Collect`. `GPUSensor` produces per-GPU measurements; `CPUSensor` produces one host-wide logical-CPU measurement.
-- **Backend** — a data source for one sensor. Defined as a sensor-facing interface in `toolkit/`. `SysfsCPU` is a context-aware file backend in `toolkit/`; `NVMLBackend` lives in `toolkit/nvml/` because it is gated on linux + cgo + libnvidia-ml.
+- **Backend** — a data source for one sensor. Defined as a sensor-facing interface in `toolkit/`. `SysfsCPU` is a deprecated context-aware file backend in `toolkit/`, superseded in the CLI by the `collect/sensors/cpu` collect sensor; `NVMLBackend` lives in `toolkit/nvml/` because it is gated on linux + cgo + libnvidia-ml.
 
 #### Adding a sensor for a new domain
 
@@ -241,6 +241,8 @@ If the dep ends up linked into the CLI, `toolkit/cmd/health-validation/SHIPPED_M
 **BUILD files** — Gazelle manages `BUILD.bazel` files. After adding or removing `.go` files or changing imports, run `bazel run //tools/gazelle` to regenerate. Do not hand-edit dep lists that Gazelle owns.
 
 **Mock constructors** — test doubles use exported constructor functions that return the interface (e.g. `MockGPU(...)`, `MockCommandExecutor(...)`), not exported mock structs. The underlying type stays unexported.
+
+**Example tests** — every `agentkit/examples/*` program keeps a `main_test.go` that runs its wiring (signal selection, sensor and catalog construction) without hardware under `bazel test //...`. Examples only fail at runtime against real sources, so CI's compile check alone misses a signal or check the example's sensors reject.
 
 **PIE + lazy binding** — the repo sets `--@rules_go//go/config:linkmode=pie` and the hermetic LLVM toolchain hardcodes `-Wl,-z,relro,-z,now` into every link. Two adjustments keep this workable:
 
