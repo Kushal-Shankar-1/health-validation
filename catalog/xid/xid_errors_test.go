@@ -260,3 +260,20 @@ func TestXidErrors_PerCodeCriticalCheck(t *testing.T) {
 		t.Errorf("RecommendedAction = %v, want %v", critical[0].RecommendedAction, want)
 	}
 }
+
+func TestXidErrors_CHINonDataError_ResetsGPU(t *testing.T) {
+	v, ok := checkResult(evalXid(t, 159), "gpu_xid_159")
+	if !ok {
+		t.Fatalf("gpu_xid_159 verdict not found")
+	}
+	if v.Severity != health.Critical {
+		t.Errorf("Severity = %v, want CRITICAL", v.Severity)
+	}
+	if want := health.Drain(health.RemediationActionResetGPU, health.RemediationActionServiceRequired); !v.RecommendedAction.Equal(want) {
+		t.Errorf("RecommendedAction = %v, want %v", v.RecommendedAction, want)
+	}
+	want := "GPU Xid 159 detected: CHI non-data error. NVIDIA's CHECK_UVM guidance is to reset the GPU if UVM or vGPU is in use; otherwise ignore the error. Health Validation cannot determine whether either was in use when this error occurred, so it recommends a GPU reset as a conservative default."
+	if len(v.Messages) != 1 || v.Messages[0] != want {
+		t.Errorf("Messages = %q, want [%q]", v.Messages, want)
+	}
+}
