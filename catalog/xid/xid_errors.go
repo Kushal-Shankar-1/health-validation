@@ -78,6 +78,141 @@ var nvlink5Xids = []nvlink5Xid{
 	{code: 150, description: "NVLink MSE error"},
 }
 
+// nvlink5SubXidCode is one fault subtype NVIDIA's decode table
+// differentiates purely by SubXidCode (IntrInfo[25:20]) rather than by
+// ErrorStatus — e.g. Xid 149's NETIR_LINK_EVT/NETIR_LINK_DOWN family,
+// the one operators configure per-subcode in practice (e.g. "149.4",
+// "149.A"). Most (code, subcode) groups in [nvlink5DecodeTable] instead
+// vary by ErrorStatus, where SubXidCode alone doesn't distinguish the
+// different resolutions — see [nvlink5SubXidCodes] for which groups
+// qualify.
+//
+// Each one gets its own check (gpu_xid_<subXidCode>, e.g.
+// gpu_xid_149_4), additive to (not a replacement for) [nvlink5Check]'s
+// code-level Fatal/Nonfatal check, so every event on that code still
+// produces at least that baseline verdict. Splitting lets an operator
+// independently disable/override the guidance for one specific fault
+// subtype without touching the rest.
+//
+// The code-level check still fires on every event, so silencing one
+// subtype entirely means disabling both checks.
+type nvlink5SubXidCode struct {
+	subXidCode    string // e.g. "149.4"
+	subcode       string // e.g. "NETIR_LINK_EVT/NETIR_LINK_DOWN"
+	investigatory string
+	critical      bool // true when the decode table's resolution is RESET_GPU rather than IGNORE
+}
+
+// nvlink5SubXidCodes derives every [nvlink5SubXidCode] from
+// [nvlink5DecodeTable]: rows within a (code, subcode) group that share
+// a blank ErrorStatus and are disambiguated purely by their IntrInfo
+// pattern's embedded SubXidCode digit (see [nvlink5SubXidCodeDigit]),
+// keeping only digits every row under that code resolves alike (see
+// [nvlink5SubXidCodeResolvesAlike]). A group with only one row, whose
+// rows vary by ErrorStatus instead, or whose digit other rows resolve
+// differently, is left to [nvlink5Check]'s code-level Fatal/Nonfatal
+// check.
+var nvlink5SubXidCodes = deriveNVLink5SubXidCodes()
+
+// deriveNVLink5SubXidCodes builds [nvlink5SubXidCodes]' value; split
+// out so the derivation logic isn't buried in a var initializer.
+func deriveNVLink5SubXidCodes() []nvlink5SubXidCode {
+	type groupKey struct {
+		subcode string
+		code    int64
+	}
+	var order []groupKey
+	groups := make(map[groupKey][]nvlink5DecodeRow)
+	for _, row := range nvlink5DecodeTable {
+		if row.errorStatus != "" {
+			continue // disambiguated by ErrorStatus, not SubXidCode
+		}
+		k := groupKey{row.subcode, row.code}
+		if _, ok := groups[k]; !ok {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], row)
+	}
+
+	var out []nvlink5SubXidCode
+	for _, k := range order {
+		rows := groups[k]
+		if len(rows) < 2 {
+			continue // nothing to differentiate by SubXidCode
+		}
+		for _, row := range rows {
+			digit, ok := nvlink5SubXidCodeDigit(row)
+			if !ok {
+				continue
+			}
+			if !nvlink5SubXidCodeResolvesAlike(row.code, digit, row.resolution) {
+				continue
+			}
+			out = append(out, nvlink5SubXidCode{
+				subXidCode:    fmt.Sprintf("%d.%s", row.code, digit),
+				subcode:       row.subcode,
+				investigatory: row.investigatory,
+				critical:      row.resolution == "RESET_GPU",
+			})
+		}
+	}
+	return out
+}
+
+// nvlink5SubXidCodeResolvesAlike reports whether every row under code
+// sharing this SubXidCode digit calls for the same resolution.
+//
+// sub_xid_code_counts is keyed from the Xid code and IntrInfo[25:20]
+// (see [XidEvent.SubXidCode]), not from the decode-table row an event
+// matches. Several rows under one code can therefore share a digit, and
+// where they disagree the signal cannot say which of them occurred. Xid 149
+// digit 0 covers NETIR_LINK_DOWN (RESET_GPU) and NETIR_BER_EVENT
+// (IGNORE) alike, so a check keyed on it would recommend a GPU reset
+// for a bit-error event NVIDIA says to ignore.
+//
+// Such a digit names no single fault subtype, which is the whole
+// premise of a per-subcode check, so it gets no check and its events
+// are left to [nvlink5Check]'s code-level verdict.
+func nvlink5SubXidCodeResolvesAlike(code int64, digit, resolution string) bool {
+	for _, row := range nvlink5DecodeTable {
+		if row.code != code {
+			continue
+		}
+		rowDigit, ok := nvlink5SubXidCodeDigit(row)
+		if ok && rowDigit != digit {
+			continue
+		}
+		// !ok means the row wildcards the digit bits and so matches
+		// every digit under this code, including this one.
+		if row.resolution != resolution {
+			return false
+		}
+	}
+	return true
+}
+
+// nvlink5SubXidCodeDigit extracts row's SubXidCode digit: the literal
+// 6-bit value at characters 6-11 of its v1Pattern, the fixed IntrInfo
+// bit position (see [nvlink5SubXidCodeMask]) both driver eras place it
+// at — formatted as [XidEvent.SubXidCode] formats it, so the label
+// matches what a check's CEL rule looks up in sub_xid_code_counts. Returns ok=false if that bit range isn't a fixed
+// value in this row's pattern (wildcarded, meaning the row isn't
+// SubXidCode-differentiated).
+func nvlink5SubXidCodeDigit(row nvlink5DecodeRow) (string, bool) {
+	if len(row.v1Pattern) != 32 {
+		return "", false
+	}
+	bits := row.v1Pattern[6:12]
+	if strings.ContainsRune(bits, '-') {
+		return "", false
+	}
+	v, err := strconv.ParseUint(bits, 2, 8)
+	if err != nil {
+		return "", false
+	}
+	return fmt.Sprintf("%X", v), true
+}
+
 // warningClass groups warning-severity Xid codes that share a
 // resolution bucket. All warning classes live as separate rules in the
 // single consolidated gpu_xid_warning check, each carrying its bucket
@@ -116,7 +251,10 @@ var warningClasses = []warningClass{
 }
 
 // Checks returns every Xid check shipped with the catalog: one CRITICAL
-// check per critical Xid code, a single consolidated WARNING check
+// check per critical Xid code, one Fatal/Nonfatal check per NVLink5
+// (144-150) code, one additional per-SubXidCode check for each fault
+// subtype NVIDIA's decode table differentiates that way (see
+// [nvlink5SubXidCodeCheck]), a single consolidated WARNING check
 // covering all warning-severity codes, and an INFO check for Xid 154
 // (a recovery-action notice that only annotates another Xid).
 //
@@ -124,12 +262,15 @@ var warningClasses = []warningClass{
 // sensor and tests its xid_counts map. Codes whose immediate action is
 // IGNORE/empty, and Unused codes, are not represented and never fire.
 func Checks() []health.CheckDefinition {
-	checks := make([]health.CheckDefinition, 0, len(criticalXids)+len(nvlink5Xids)+2)
+	checks := make([]health.CheckDefinition, 0, len(criticalXids)+len(nvlink5Xids)+len(nvlink5SubXidCodes)+2)
 	for _, c := range criticalXids {
 		checks = append(checks, criticalCheck(c))
 	}
 	for _, c := range nvlink5Xids {
 		checks = append(checks, nvlink5Check(c))
+	}
+	for _, c := range nvlink5SubXidCodes {
+		checks = append(checks, nvlink5SubXidCodeCheck(c))
 	}
 	checks = append(checks, warningCheck(), xid154Check())
 	return checks
@@ -160,18 +301,18 @@ func criticalCheck(c criticalXid) health.CheckDefinition {
 // line itself (see [toolkit/xid.ParseXid] / [NVLink5Detail]); the check
 // mirrors that split: Fatal is CRITICAL, Nonfatal is WARNING with no
 // recommended action (matching NVIDIA's own guidance that most
-// non-fatal NVLink5 subcodes need no remediation — confirmed against
-// NVIDIA's Xid 144-150 decode table: Non-fatal-severity rows resolve to
-// IGNORE in the overwhelming majority of cases).
+// non-fatal NVLink5 subcodes need no remediation — confirmed by
+// [nvlink5DecodeTable]: Non-fatal-severity rows resolve to IGNORE in
+// the overwhelming majority of cases).
 //
-// The Fatal rule uses [resetAndService]: filtering NVIDIA's Xid
-// 144-150 decode table to Fatal-severity rows only, ~95% (37 of 39)
+// The Fatal rule uses [resetAndService]: filtering
+// [nvlink5DecodeTable] to Fatal-severity rows only, ~95% (37 of 39)
 // resolve to a GPU reset, then service if the reset doesn't clear it:
 // exactly this sequence. The rare exceptions that resolve to IGNORE
 // despite Fatal severity aren't distinguishable from a static per-check
-// action (they depend on the specific IntrInfo fault variant, only
-// available per-event), so this errs toward the safer over-remediation
-// rather than silently doing nothing.
+// action (they depend on the specific IntrInfo subcode, only available
+// per-event), so this errs toward the safer over-remediation rather
+// than silently doing nothing.
 //
 // Unlike [criticalCheck], the check-level default here is
 // [health.NoAction] and the Fatal rule sets its own RecommendedAction:
@@ -207,6 +348,32 @@ func nvlink5Check(c nvlink5Xid) health.CheckDefinition {
 			Message:    fmt.Sprintf("GPU Xid %d detected: %s (Nonfatal).", c.code, c.description),
 		},
 	}
+	return def
+}
+
+// nvlink5SubXidCodeCheck builds the check for one [nvlink5SubXidCode],
+// for whichever Xid code and subcode it names.
+func nvlink5SubXidCodeCheck(c nvlink5SubXidCode) health.CheckDefinition {
+	id := "gpu_xid_" + strings.ToLower(strings.Replace(c.subXidCode, ".", "_", 1))
+	action := health.NoAction
+	severity := health.Warning
+	if c.critical {
+		action = resetAndService()
+		severity = health.Critical
+	}
+	def := baseCheck(
+		id,
+		fmt.Sprintf("GPU Xid %s (%s)", c.subXidCode, c.subcode),
+		fmt.Sprintf("Detects NVRM Xid %s (%s) occurrences in the system journal since boot.", c.subXidCode, c.subcode),
+		action,
+	)
+	def.RequiredSignals = []string{SignalSubXidCodeCounts}
+	def.Architectures = []string{"GB200", "GB300"}
+	def.Rules = []health.Rule{{
+		Expression: fmt.Sprintf("%q in sub_xid_code_counts", c.subXidCode),
+		Severity:   severity,
+		Message:    fmt.Sprintf("GPU Xid %s (%s) detected. Investigatory guidance: %s.", c.subXidCode, c.subcode, c.investigatory),
+	}}
 	return def
 }
 

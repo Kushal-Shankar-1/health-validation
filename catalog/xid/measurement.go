@@ -10,11 +10,12 @@ import "github.com/dsx-ai-factory/health-validation/catalog/health"
 // expressions and must match the RequiredSignals declared in checks
 // that consume Xid measurements.
 const (
-	SignalEvents         = "events"
-	SignalXidCounts      = "xid_counts"
-	SignalFatalXidCounts = "fatal_xid_counts"
-	SignalSince          = "since"
-	SignalEventCount     = "event_count"
+	SignalEvents           = "events"
+	SignalXidCounts        = "xid_counts"
+	SignalFatalXidCounts   = "fatal_xid_counts"
+	SignalSubXidCodeCounts = "sub_xid_code_counts"
+	SignalSince            = "since"
+	SignalEventCount       = "event_count"
 )
 
 // MeasurementSignals lists every signal an XidMeasurement carries.
@@ -25,6 +26,7 @@ var MeasurementSignals = []string{
 	SignalEvents,
 	SignalXidCounts,
 	SignalFatalXidCounts,
+	SignalSubXidCodeCounts,
 	SignalSince,
 	SignalEventCount,
 }
@@ -49,7 +51,12 @@ type XidEvent struct {
 // Every field here is directly available from the log line: IntrInfo,
 // ErrorStatus, and DebugData are the raw hex strings NVRM prints; Fatal
 // and SubComponent are literal text in the log line (not
-// register-decoded).
+// register-decoded). Anything read out of the registers, such as
+// [XidEvent.SubXidCode], is derived in this package. Deciding what a given
+// (code, SubComponent, ErrorStatus/IntrInfo) combination means —
+// NVIDIA's documented resolution/investigation guidance — requires
+// NVIDIA's Xid 144-150 decode table and the host's driver era, which is
+// catalog knowledge and arrives with the code that consumes it.
 type NVLink5Detail struct {
 	SubComponent string   `json:"sub_component"`
 	IntrInfo     string   `json:"intr_info,omitempty"`
@@ -69,9 +76,13 @@ type NVLink5Detail struct {
 // FatalXidCounts is the same shape, but counts only occurrences NVRM
 // itself marked Fatal; today that is populated exclusively by the
 // NVLink5 family (Xid 144-150) since no other Xid code's log line
-// carries a fatal/nonfatal distinction. Events preserves the
-// full per-occurrence detail — process name, PCI address, pid, and (for
-// 144-150) NVLink5 — for message interpolation and richer rules.
+// carries a fatal/nonfatal distinction. The sub_xid_code_counts signal
+// is derived from Events rather than stored (see [XidMeasurement.DerivedSignals]):
+// it is keyed by [XidEvent.SubXidCode] (e.g. "149.4") instead of the
+// bare Xid code, so a check can act on one documented fault subtype
+// rather than the whole code. Events preserves the full per-occurrence
+// detail — process name, PCI address, pid, and (for 144-150) NVLink5 —
+// for message interpolation and richer rules.
 type XidMeasurement struct {
 	XidCounts      map[int64]int64 `json:"xid_counts"`
 	FatalXidCounts map[int64]int64 `json:"fatal_xid_counts"`

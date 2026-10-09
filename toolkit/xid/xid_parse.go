@@ -56,8 +56,9 @@ var xidNVLink5RE = regexp.MustCompile(
 // non-nil meaning even with zero events: EventCount is 0 and XidCounts
 // is nil, which a check reads as "no Xid faults observed".
 //
-// Every field this parses comes straight from the log line — no NVIDIA
-// decode-table lookup happens here.
+// Every field this parses comes straight from the log line. Reading
+// meaning out of those fields — register bits, the decode table — is
+// the catalog's job, so every source of Xid events shares it.
 func ParseXid(since string, lines []string) xid.XidMeasurement {
 	m := xid.XidMeasurement{Since: since}
 	for _, line := range lines {
