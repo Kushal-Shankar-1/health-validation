@@ -43,7 +43,7 @@ func customCheck() health.CheckDefinition {
 // TestWithChecksRegistersCustomCheck confirms a check supplied via the
 // WithChecks SPI is registered into the catalog alongside the built-ins.
 func TestWithChecksRegistersCustomCheck(t *testing.T) {
-	cat, _, err := buildCatalog(nil, []health.CheckDefinition{customCheck()}, "")
+	cat, _, err := buildCatalog(nil, []health.CheckDefinition{customCheck()}, "", health.OperatorInfra)
 	if err != nil {
 		t.Fatalf("buildCatalog: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestWithChecksPreservesProvenance(t *testing.T) {
 	canonical := customCheck()
 	canonical.Provenance = health.NVIDIA
 
-	cat, _, err := buildCatalog(nil, []health.CheckDefinition{canonical}, "")
+	cat, _, err := buildCatalog(nil, []health.CheckDefinition{canonical}, "", health.OperatorInfra)
 	if err != nil {
 		t.Fatalf("buildCatalog: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestWithChecksDuplicateIDFails(t *testing.T) {
 	collide := customCheck()
 	collide.ID = "gpu_count" // collides with a built-in
 
-	_, _, err := buildCatalog(nil, []health.CheckDefinition{collide}, "")
+	_, _, err := buildCatalog(nil, []health.CheckDefinition{collide}, "", health.OperatorInfra)
 	if err == nil {
 		t.Fatal("expected duplicate-ID error, got nil")
 	}
@@ -93,7 +93,7 @@ func TestWithChecksDuplicateIDFails(t *testing.T) {
 // wired into the catalog: a check skips on an architecture it does not cover
 // (A100 here) instead of running with the wrong thresholds.
 func TestBuildCatalogAppliesArchitecture(t *testing.T) {
-	cat, _, err := buildCatalog(nil, nil, "A100")
+	cat, _, err := buildCatalog(nil, nil, "A100", health.OperatorInfra)
 	if err != nil {
 		t.Fatalf("buildCatalog: %v", err)
 	}
@@ -794,6 +794,73 @@ func TestRunCommandRejectsInvalidCadence(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "unknown scheduling cadence") {
 		t.Errorf("stderr = %q, want unknown cadence error", stderr.String())
+	}
+}
+
+func TestRunCommandRejectsInvalidExecutionContext(t *testing.T) {
+	a := New().WithProgramName("test")
+	a.host = panicHost{}
+	var stdout, stderr bytes.Buffer
+	if code := a.Run([]string{"run", "--node-id", testNodeID, "--execution-context", "NOT_A_CONTEXT"}, &stdout, &stderr); code != exitError {
+		t.Fatalf("Run exit = %d, want %d; stderr = %q", code, exitError, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want no verdict", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "unknown execution context") {
+		t.Errorf("stderr = %q, want unknown execution context error", stderr.String())
+	}
+}
+
+func TestRunCommandExecutionContextSelection(t *testing.T) {
+	check := customCheck()
+	check.ID = "tenant_only"
+	check.ExecutionContexts = []health.ExecutionContext{health.TenantGuest}
+	tests := []struct {
+		name        string
+		args        []string
+		wantSkipped bool
+	}{
+		{name: "default is tenant guest"},
+		{name: "operator infra flag", args: []string{"--execution-context", "OPERATOR_INFRA"}, wantSkipped: true},
+		{name: "folded and padded tenant guest", args: []string{"--execution-context", "  tenant_guest  "}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := cadenceRunApp().WithChecks(check).WithNodeBackend(toolkit.MockNode(node.NodeMeasurement{GPUCount: 4}))
+			args := append([]string{"--node-id", testNodeID}, tt.args...)
+			var stdout, stderr bytes.Buffer
+			if code := a.runCommand(args, &stdout, &stderr); code == exitError {
+				t.Fatalf("runCommand exit = %d; stderr = %q", code, stderr.String())
+			}
+			var verdict health.NodeVerdict
+			if err := json.Unmarshal(stdout.Bytes(), &verdict); err != nil {
+				t.Fatalf("unmarshal: %v; stdout = %s", err, stdout.String())
+			}
+
+			var found, skipped bool
+			for _, result := range verdict.CheckResults {
+				if result.CheckID == check.ID {
+					found = true
+				}
+			}
+			for _, result := range verdict.SkippedChecks {
+				if result.CheckID == check.ID {
+					found = true
+					skipped = true
+					if result.SkipReason != health.DeploymentUnsupported {
+						t.Errorf("%s skip reason = %v, want %v", check.ID, result.SkipReason, health.DeploymentUnsupported)
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("%s verdict not found", check.ID)
+			}
+			if skipped != tt.wantSkipped {
+				t.Errorf("%s skipped = %v, want %v", check.ID, skipped, tt.wantSkipped)
+			}
+		})
 	}
 }
 

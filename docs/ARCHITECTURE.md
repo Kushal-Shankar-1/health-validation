@@ -56,6 +56,10 @@ To add a sensor for a new hardware domain: define a measurement struct in `catal
 
 Scheduling cadence is not a construction option. Set `Cadence` in per-run `catalog.EvaluationOptions` or `toolkit.CollectionOptions`; either zero value evaluates every registered check, and zero-value collection options also use the default timeout. Checks outside the requested window are reported with `CADENCE_MISMATCH`, allowing dependent checks to follow the normal `DEPENDENCY_SKIPPED` cascade. One catalog can serve Continuous, Prolog, and Maintenance windows.
 
+`health-validation run` defaults to `TENANT_GUEST`; `--execution-context`
+selects another context. The CLI applies the selected context through
+`catalog.WithExecutionContext` when constructing the catalog.
+
 ## Execution contexts
 
 | Context | Go constant | Where it runs |
