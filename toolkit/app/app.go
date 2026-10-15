@@ -50,6 +50,7 @@ import (
 	"github.com/dsx-ai-factory/health-validation/catalog/health"
 	"github.com/dsx-ai-factory/health-validation/collect/observation"
 	"github.com/dsx-ai-factory/health-validation/toolkit"
+	"github.com/dsx-ai-factory/health-validation/toolkit/internal/collectbridge"
 	"github.com/dsx-ai-factory/health-validation/toolkit/internal/version"
 	"github.com/dsx-ai-factory/health-validation/toolkit/observations"
 	"github.com/dsx-ai-factory/health-validation/toolkit/otelmetrics"
@@ -399,7 +400,12 @@ func (a *App) runCommand(args []string, stdout, stderr io.Writer) int {
 		return exitError
 	}
 
-	sensors, err := a.sensors(timeout, nil)
+	runnable, err := cat.RunnableChecks(catalog.EvaluationOptions{Cadence: cadence})
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: select runnable checks: %v\n", a.prog, err)
+		return exitError
+	}
+	sensors, err := a.sensors(timeout, requiredFor(runnable))
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: register collect sensors: %v\n", a.prog, err)
 		return exitError
@@ -414,7 +420,7 @@ func (a *App) runCommand(args []string, stdout, stderr io.Writer) int {
 	return code
 }
 
-func (a *App) sensors(timeout time.Duration, categories map[health.Category]bool) ([]toolkit.Sensor, error) {
+func (a *App) sensors(timeout time.Duration, required requiredSignals) ([]toolkit.Sensor, error) {
 	gpu := a.gpu
 	if gpu == nil {
 		gpu = a.host.gpuBackend()
@@ -455,7 +461,7 @@ func (a *App) sensors(timeout time.Duration, categories map[health.Category]bool
 		sensors = append(sensors, toolkit.NewCPUSensor(a.cpu))
 	}
 	builtinSources, builtinAdapters := a.builtinCollect()
-	collectSensors, err := a.collectSensorsForCategories(timeout, builtinSources, builtinAdapters, categories)
+	collectSensors, err := a.collectSensors(timeout, builtinSources, builtinAdapters, required)
 	if err != nil {
 		return nil, err
 	}
@@ -594,7 +600,13 @@ func (a *App) collectCommand(args []string, stdout, stderr io.Writer) int {
 		return exitError
 	}
 	defer a.host.close()
-	allSensors, err := a.sensors(timeout, categories)
+	// Whole categories, not runnable signals: a batch may be evaluated later
+	// under a different cadence or config.
+	required := make(requiredSignals, len(categories))
+	for category := range categories {
+		required[category] = nil
+	}
+	allSensors, err := a.sensors(timeout, required)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: register collect sensors: %v\n", a.prog, err)
 		return exitError
@@ -656,6 +668,10 @@ func collectionSensors(sensors []toolkit.Sensor, categories map[health.Category]
 	covered := make(map[health.Category]bool)
 	for _, sensor := range sensors {
 		category, ok := categoryBySensor[sensor.Name()]
+		// Collect adapters declare their category; their names are arbitrary.
+		if bridged, isBridged := sensor.(*collectbridge.Sensor); isBridged {
+			category, ok = bridged.Category(), true
+		}
 		if ok && categories[category] {
 			selected = append(selected, sensor)
 			covered[category] = true
