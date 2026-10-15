@@ -76,6 +76,7 @@ SYFT_FALSE_POSITIVES = {
         "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp",
         "BSD-3-Clause",
     ),
+    ("go.opentelemetry.io/otel/log", "BSD-3-Clause"),
     ("go.opentelemetry.io/otel/metric", "BSD-3-Clause"),
     ("go.opentelemetry.io/otel/sdk", "BSD-3-Clause"),
     ("go.opentelemetry.io/otel/sdk/metric", "BSD-3-Clause"),
