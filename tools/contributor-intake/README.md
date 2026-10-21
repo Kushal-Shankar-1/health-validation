@@ -1,51 +1,44 @@
 # Contribution intake
 
-The workflow labels new issues and PRs, including drafts. Optional Slack alerts
-call attention to reviewed external authors and authors with unverified
-affiliation. Classification and alerts start disabled and need a supervised pilot.
+On new issue and PR openings, including draft PRs, reviewed code from `main`
+fetches current GitHub metadata and maintains one `affiliation/*` label.
+Classification starts disabled. It needs only GitHub access and private reviewed
+affiliation evidence. The existing GitHub Slack subscription owns notifications
+separately; this workflow has no Slack transport or configuration.
 
-## Flow and shared queue
+## Labels and shared views
 
-On an opening, reviewed code from `main` fetches current GitHub metadata and
-maintains one `affiliation/*` label. Classification needs no Slack configuration
-and leaves existing alert markers unchanged. These labels describe affiliation;
-they do not assign priority, acknowledge a report or replace engineering triage.
-
-When alerts are enabled, NVIDIA authors and GitHub Bot accounts receive no targeted
-alert. External and unverified authors get a `triage/alert-requested` marker before
-one Slack send attempt. The operator checks the post and records its permalink in
-a private journal. The existing GitHub Slack subscription can continue; agree how
-to handle duplicate notifications before enabling targeted alerts.
-
-Alerts contain configured recipient mentions, the item number, open/closed state,
-draft status, affiliation, author login and GitHub link. Contribution titles,
-bodies, comments and private review evidence are omitted.
-
-Shared views:
+The labels are `affiliation/nvidia`, `affiliation/external`,
+`affiliation/unverified` and `affiliation/bot`. Only those four labels may be added
+or removed. All other labels and assignees are preserved. The Task / Question form
+also applies the existing `needs-triage` label.
 
 - [Open external items](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aopen%20label%3Aaffiliation%2Fexternal)
 - [Open unverified items](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aopen%20label%3Aaffiliation%2Funverified)
-- [Open NVIDIA items](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aopen%20label%3Aaffiliation%2Fnvidia)
-- [Items without an affiliation label](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aopen%20-label%3Aaffiliation%2Fnvidia%20-label%3Aaffiliation%2Fexternal%20-label%3Aaffiliation%2Funverified%20-label%3Aaffiliation%2Fbot)
-- [All requested alerts](https://github.com/dsx-ai-factory/health-validation/issues?q=label%3Atriage%2Falert-requested)
+- [Open items without an affiliation label](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aopen%20-label%3Aaffiliation%2Fnvidia%20-label%3Aaffiliation%2Fexternal%20-label%3Aaffiliation%2Funverified%20-label%3Aaffiliation%2Fbot)
+- [Open items needing triage](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aopen%20label%3Aneeds-triage)
+- [Unassigned open issues](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aissue%20is%3Aopen%20no%3Aassignee)
+- [Ready PRs without approval](https://github.com/dsx-ai-factory/health-validation/pulls?q=is%3Apr%20is%3Aopen%20draft%3Afalse%20-review%3Aapproved)
+- [All open issues and PRs](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aopen)
 
-These views cover labeled items. Review unlabeled and older items separately;
-opening events do not backfill old items or refresh changed affiliations. The
-request label records an alert request, not delivery or a human response.
+Use the all-open view to include drafts, approved PRs awaiting merge and items
+awaiting replies. Maintainers review acknowledgements and ownership manually;
+unassigned status and review filters alone cannot establish those facts.
 
-## Affiliation evidence
+## Private affiliation evidence
 
-Only reviewed evidence tied to the author's numeric GitHub account ID determines
-NVIDIA or external status. Access roles, CODEOWNERS, team membership,
-`author_association`, labels, profile company and commit email cannot establish
-employment. Missing evidence remains unverified. Bot status comes from the item
-author's GitHub account type.
+Only reviewed evidence tied to the author's numeric GitHub account ID establishes
+NVIDIA or external status. Access roles, CODEOWNERS, team or organization
+membership, `author_association`, labels, profile company and commit email cannot
+establish employment. Bot status comes from the author's GitHub account type.
+Missing, malformed, conflicting, expired or future-dated relevant evidence leaves
+humans unverified. A numeric ID survives a valid login rename; a reused login
+cannot transfer another account's affiliation.
 
-Keep review history in private storage, outside source, logs and workflow
-artifacts. Supply one current record per author through the
-`HEALTH_VALIDATION_REVIEWED_DECISIONS_JSON` Actions secret. Every
-field below is required. The example uses synthetic values; reviewers must choose
-actual expiry dates:
+Keep evidence and review history in private storage, outside source, logs and
+workflow artifacts. Supply one current record per author in the Actions secret
+`HEALTH_VALIDATION_REVIEWED_DECISIONS_JSON`. Every field below is required;
+these are synthetic values and reviewers must choose current review/expiry dates:
 
 ```json
 [
@@ -55,111 +48,37 @@ actual expiry dates:
     "affiliation": "external",
     "reviewed_by": "authorized-reviewer",
     "evidence_ref": "private-record-reference",
-    "reviewed_at": "2026-10-01T12:00:00Z",
-    "expires_at": "2026-10-08T12:00:00Z",
+    "reviewed_at": "2026-10-19T12:00:00Z",
+    "expires_at": "2026-10-26T12:00:00Z",
     "revision": "review-1"
   }
 ]
 ```
 
-Missing fields, conflicting current records, mismatched IDs, future reviews and
-expired evidence leave the author unverified. A numeric ID survives a login
-rename; a reused login cannot transfer the previous account's affiliation.
-Missing, malformed or non-array registry JSON also leaves authors unverified and
-emits a generic diagnostic. An empty registry classifies every human as unverified.
+Missing, malformed or non-array registry JSON produces a generic warning and
+leaves humans unverified. An empty array also leaves every human unverified.
+Maintainers review evidence and corrections manually; there is no directory sync.
 
-Affiliation is reviewed manually; the workflow has no corporate directory
-integration. Name a reviewer and a way for contributors to request corrections
-before publishing classifications. Keep the evidence private. With alerts on,
-an empty registry produces targeted alerts for every new human opening.
-
-## Enable classification
-
-Before enabling a supervised classification pilot:
+## Supervised activation and rollback
 
 1. Review and merge the disabled workflow and scripts into `main`.
-2. Verify label definitions: `affiliation/nvidia`, `affiliation/external`,
-   `affiliation/unverified` and `affiliation/bot`.
-3. Provision the reviewed registry secret above and review existing authors.
-4. Name an operator for affiliation review and engineering queue checks.
-5. Set `HEALTH_VALIDATION_INTAKE_ENABLED` to exactly `true` as a repository variable.
-   Leave `HEALTH_VALIDATION_ALERTS_ENABLED` unset or `false`. Classification then
-   runs without a Slack token or routing secret. Other or absent intake values
-   keep the whole job off.
+2. Create the four affiliation labels and provide the private reviewed registry.
+   Agree who reviews evidence, expiry and contributor corrections before use.
+3. Verify the workflow can read items and add/remove issue labels in this fixed
+   repository. The CLI also requires `HEALTH_VALIDATION_APPLY_LABELS=true` exactly;
+   the workflow supplies that opt-in inside its disabled job.
+4. Set the repository variable `HEALTH_VALIDATION_INTAKE_ENABLED` to `true` exactly
+   for a supervised pilot. Missing or any other value keeps the job disabled.
+5. Check normal pilot openings for reviewed NVIDIA/external authors, unverified
+   authors, Bot accounts and draft PRs. Verify unrelated labels and assignees and
+   review generic failures before wider activation.
 
-## Enable optional alerts
+To roll back, remove `HEALTH_VALIDATION_INTAKE_ENABLED` or set it to `false`, and
+cancel an in-progress intake run if needed. Existing labels remain; maintainers
+can correct affiliation labels manually. The separate native Slack feed remains
+configured independently.
 
-After the classification pilot, agree recipients, expected noise and who will
-check delivery before enabling alerts:
-
-1. Provision an approved bot token as `HEALTH_VALIDATION_SLACK_BOT_TOKEN` through
-   Actions secret management. Verify `chat:write`, pilot-channel access and that
-   intended recipients receive its mentions.
-2. Provision `HEALTH_VALIDATION_INTAKE_ROUTING_JSON` as one Actions secret with
-   `channel_id` and `mention_user_ids`, for example
-   `{"channel_id":"C0123456789","mention_user_ids":["U0123456789","U0987654321"]}`.
-   Keep the whole object in a secret to mask runner logging before code starts.
-   Verify runner/pinned-action policies, GitHub/Slack egress and credential access
-   for actual fork PR events.
-3. Verify `triage/alert-requested` and name a delivery operator. Maintain a shared
-   private journal with repository/item identity, run reference, decision revision,
-   delivery state, Slack permalink, check time and reviewer.
-4. Set `HEALTH_VALIDATION_ALERTS_ENABLED` to exactly `true` for an approved
-   supervised window. No other value enables Slack. Enabling alerts does not
-   replay openings already processed while alerts were off.
-
-Set the alerts variable to `false` to stop targeted messages while keeping
-classification. Set the intake variable to `false` to stop both.
-
-The workflow does not provision labels, apps, channel access or secrets. Its
-native HTTPS POST to Slack has an absolute 10-second deadline covering connection
-and response consumption, a 64 KiB response limit, no redirects and no automatic
-retries. Routing and raw receipts stay inside the trusted process, without
-workflow outputs or separate step inputs. PR code is never executed.
-
-## Supervised checks and limits
-
-Record actual results for:
-
-- Classification without Slack secrets, with no alert marker or post.
-- Issue, ordinary PR and draft PR from an unverified author.
-- Reviewed external, reviewed NVIDIA and actual GitHub Bot authors.
-- Preservation of unrelated labels and assignees.
-- GitHub read and write failures.
-
-With alerts enabled, also check:
-
-- Correct destination, recipient mentions and elapsed time from opening to post.
-- Replay with an existing intent: reconciliation is required and no post is made.
-- Missing sender, invalid routing, Slack rejection and ambiguous timeout or
-  interruption.
-
-A failed or interrupted alert run may already have posted. Inspect Slack and the
-private journal before an authorized retry; do not blindly rerun or delete intent.
-Record the post's permalink privately even after a successful send. Disable verbose
-debugging with private inputs.
-
-At agreed review times, compare queues with workflow runs and reviewed affiliation
-records. Include closed items when checking missed openings, and reconcile the
-delivery journal when alerts are enabled. Opening events do not backfill old items
-or refresh changed/expired affiliations; the operator must review these cases.
-Per-item concurrency and intent labels do not guarantee
-exactly-once delivery: pending jobs can be cancelled, labels can change and events
-can be missed. This pilot requires human reconciliation; unattended operation is
-outside the scope of this workflow.
-
-## Verification
-
-Tests use a pinned Bazel Node toolchain, with no npm dependencies:
-
-```sh
-bazel test //tools/contributor-intake:all
-bazel test //...
-bazel run //tools/format
-```
-
-For quick iteration with Node 22 or newer:
-
-```sh
-node --test tools/contributor-intake/*.test.mjs
-```
+The workflow handles openings only. It has no backfill or later affiliation
+refresh, assignment, priority, acknowledgement or response tracking. Labels do
+not establish a response SLA or change published support policy; engineering
+triage and follow-up remain manual.

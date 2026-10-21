@@ -4,11 +4,9 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { request as httpsRequest } from 'node:https';
-import { planIntake, validateRouting } from './intake-plan.mjs';
+import { planIntake } from './intake-plan.mjs';
 
 const REPO = { id: 1295779810, full_name: 'dsx-ai-factory/health-validation' };
-const INTENT = 'triage/alert-requested';
 const AFFILIATIONS = new Set(['nvidia', 'external', 'unverified', 'bot'].map(value => `affiliation/${value}`));
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const positiveInteger = value => Number.isSafeInteger(value) && value > 0;
@@ -36,32 +34,17 @@ export function openingFromActions(eventName, payload) {
   return item;
 }
 
-export async function prepareActionsOpening({ eventName, payload, evaluatedAt, routing, reviewedDecisions = [], alertsEnabled = false }, github) {
-  if (typeof alertsEnabled !== 'boolean') throw new TypeError('alertsEnabled must be a boolean');
-  const route = routing === undefined && !alertsEnabled ? undefined : validateRouting(routing);
+export async function prepareActionsOpening({ eventName, payload, evaluatedAt, reviewedDecisions = [] }, github) {
   const eventItem = openingFromActions(eventName, payload);
-  if (!eventItem) return { status: 'ignored', payload: null };
+  if (!eventItem) return { status: 'ignored' };
   const current = normalizeItem(await github.readItem(eventItem.kind, eventItem.number), eventItem.kind);
   if (current.node_id !== eventItem.node_id || current.number !== eventItem.number) throw new Error('authoritative item identity mismatch');
-  const decision = planIntake({ evaluated_at: evaluatedAt, item: current, routing: route,
+  const decision = planIntake({ evaluated_at: evaluatedAt, item: current,
     reviewed_decisions: reviewedDecisions });
   if (decision.input_error.length) throw new Error('invalid authoritative item metadata');
   if (decision.label_changes.add.length) await github.addLabels(current.number, decision.label_changes.add);
   for (const label of decision.label_changes.remove) await github.removeLabel(current.number, label);
-  if (!alertsEnabled) return { status: 'classified', decision, payload: null };
-  if (!decision.alert_eligible) return { status: 'suppressed', decision, payload: null };
-  // The previous attempt may have posted even if its receipt was lost.
-  if (!decision.alert_request_needed) return { status: 'reconcile', decision, payload: null };
-  await github.addLabels(current.number, [INTENT]);
-  return { status: 'send', decision,
-    payload: { channel: route.channel_id, text: decision.message_text, unfurl_links: false, unfurl_media: false } };
-}
-
-function validateSlackReceipt(receipt, routing) {
-  const route = validateRouting(routing);
-  if (!isRecord(receipt) || receipt.ok !== true || receipt.channel !== route.channel_id ||
-      typeof receipt.ts !== 'string' || !/^\d{1,20}\.\d{1,10}$/.test(receipt.ts)) throw new Error('Slack receipt unverified; reconcile intent before retry');
-  return { channel_id: receipt.channel, ts: receipt.ts };
+  return { status: 'classified', decision };
 }
 
 export function createGitHubClient({ token, fetchFn = globalThis.fetch }) {
@@ -88,7 +71,7 @@ export function createGitHubClient({ token, fetchFn = globalThis.fetch }) {
       return request(`/${kind === 'pr' ? 'pulls' : 'issues'}/${checkedNumber(itemNumber)}`);
     },
     async addLabels(itemNumber, labels) {
-      if (!Array.isArray(labels) || !labels.length || !Array.from(labels).every(label => AFFILIATIONS.has(label) || label === INTENT)) throw new Error('label outside intake scope');
+      if (!Array.isArray(labels) || !labels.length || !Array.from(labels).every(label => AFFILIATIONS.has(label))) throw new Error('label outside intake scope');
       const response = await request(`/issues/${checkedNumber(itemNumber)}/labels`, 'POST', { labels });
       if (!labelArray(response) ||
           !labels.every(name => response.some(label => label.name === name))) {
@@ -108,80 +91,12 @@ export function createGitHubClient({ token, fetchFn = globalThis.fetch }) {
   };
 }
 
-// Core HTTPS avoids fetch's implicit HTTP 421 POST replay.
-export function createSlackClient({ token, requestFn = httpsRequest }) {
-  if (typeof token !== 'string' || !token.trim()) throw new Error('Slack credential unavailable');
-  return {
-    async sendNotification(payload, routing) {
-      const route = validateRouting(routing);
-      if (!isRecord(payload) || payload.channel !== route.channel_id || typeof payload.text !== 'string' || !payload.text.trim() ||
-          payload.unfurl_links !== false || payload.unfurl_media !== false) throw new Error('Slack payload invalid');
-      const body = JSON.stringify(payload);
-      return new Promise((resolve, reject) => {
-        let request, response, settled = false, bytes = 0;
-        const chunks = [];
-        const fail = () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(deadline);
-          reject(new Error('Slack request unverified; reconcile intent before retry'));
-          response?.destroy();
-          request?.destroy();
-        };
-        const deadline = setTimeout(fail, 10000);
-        try {
-          request = requestFn('https://slack.com/api/chat.postMessage', {
-            method: 'POST', agent: false,
-            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
-              'Content-Length': Buffer.byteLength(body) },
-          }, incoming => {
-            response = incoming;
-            response.on('error', fail);
-            response.on('aborted', fail);
-            response.on('close', () => { if (!settled) fail(); });
-            if (settled) { response.destroy(); return; }
-            if (!Number.isInteger(response.statusCode) || response.statusCode < 200 || response.statusCode >= 300) { fail(); return; }
-            response.on('data', chunk => {
-              if (settled) return;
-              const buffer = Buffer.from(chunk);
-              bytes += buffer.length;
-              if (bytes > 65536) { fail(); return; }
-              chunks.push(buffer);
-            });
-            response.on('end', () => {
-              if (settled) return;
-              let receipt;
-              try { receipt = validateSlackReceipt(JSON.parse(Buffer.concat(chunks).toString('utf8')), route); }
-              catch { fail(); return; }
-              settled = true;
-              clearTimeout(deadline);
-              resolve(receipt);
-            });
-          });
-          request.on('error', fail);
-          request.end(body);
-        } catch { fail(); }
-      });
-    },
-  };
-}
-
-function routingFromEnvironment() {
-  let routing;
-  try { routing = JSON.parse(process.env.HEALTH_VALIDATION_INTAKE_ROUTING_JSON); }
-  catch { throw new Error('invalid Slack routing configuration'); }
-  return validateRouting(routing);
-}
-
 const warnEvidence = () => process.stderr.write('Affiliation evidence unavailable or malformed; unresolved authors remain unverified.\n');
 
 async function cli() {
   if (process.argv.length !== 3 || process.argv[2] !== 'intake') throw new Error('use intake');
   if (process.env.HEALTH_VALIDATION_APPLY_LABELS !== 'true') throw new Error('label application is disabled');
   const github = createGitHubClient({ token: process.env.GITHUB_TOKEN });
-  const alertsEnabled = process.env.HEALTH_VALIDATION_ALERTS_ENABLED === 'true';
-  const routing = alertsEnabled ? routingFromEnvironment() : undefined;
-  const slack = alertsEnabled ? createSlackClient({ token: process.env.HEALTH_VALIDATION_SLACK_BOT_TOKEN }) : null;
   const eventPath = process.env.GITHUB_EVENT_PATH;
   if (!eventPath) throw new Error('Actions event unavailable');
   let payload;
@@ -194,17 +109,11 @@ async function cli() {
   } catch { evidenceWarning = true; }
   if (evidenceWarning) warnEvidence();
   const result = await prepareActionsOpening({ eventName: process.env.GITHUB_EVENT_NAME, payload,
-    evaluatedAt: new Date().toISOString(), routing, reviewedDecisions, alertsEnabled }, github);
+    evaluatedAt: new Date().toISOString(), reviewedDecisions }, github);
   if (!evidenceWarning && result.decision?.diagnostics.includes('review_malformed')) warnEvidence();
-  if (result.status === 'send') {
-    await slack.sendNotification(result.payload, routing);
-    process.stdout.write('Slack confirmed the post. Copy its link to the private journal.\n');
-  } else {
-    process.stdout.write(`Intake result: ${result.status}. No Slack post attempted.\n`);
-  }
-  if (result.status === 'reconcile') process.exitCode = 2;
+  process.stdout.write(`Intake result: ${result.status}.\n`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  cli().catch(() => { process.stderr.write('Intake step failed. Check permissions/configuration; reconcile any intent before retry.\n'); process.exitCode = 1; });
+  cli().catch(() => { process.stderr.write('Intake step failed. Check permissions/configuration and any attempted label changes.\n'); process.exitCode = 1; });
 }

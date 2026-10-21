@@ -3,7 +3,6 @@
 
 const REPOSITORY_ID = 1295779810;
 const REPOSITORY = 'dsx-ai-factory/health-validation';
-const REQUEST_LABEL = 'triage/alert-requested';
 const MANAGED_LABELS = ['nvidia', 'external', 'unverified', 'bot'].map(value => `affiliation/${value}`);
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const positiveInteger = value => Number.isSafeInteger(value) && value > 0;
@@ -26,16 +25,6 @@ function timestamp(value) {
   if (offset !== 'Z' && (Number(offset.slice(1, 3)) > 23 || Number(offset.slice(4, 6)) > 59)) return null;
   const result = Date.parse(value);
   return Number.isFinite(result) ? result : null;
-}
-
-export function validateRouting(routing) {
-  if (!isRecord(routing) || typeof routing.channel_id !== 'string' || !/^[CG][A-Z0-9]{8,31}$/.test(routing.channel_id) ||
-      !Array.isArray(routing.mention_user_ids) || routing.mention_user_ids.length < 1 || routing.mention_user_ids.length > 10 ||
-        !Array.from(routing.mention_user_ids).every(id => typeof id === 'string' && /^[UW][A-Z0-9]{8,31}$/.test(id)) ||
-      new Set(routing.mention_user_ids).size !== routing.mention_user_ids.length) {
-    throw new TypeError('invalid Slack routing configuration');
-  }
-  return { channel_id: routing.channel_id, mention_user_ids: [...routing.mention_user_ids] };
 }
 
 function authorIdentity(user) {
@@ -99,12 +88,10 @@ function itemErrors(item) {
 
 export function planIntake(input) {
   if (!isRecord(input)) throw new TypeError('input must be an object');
-  const routing = input.routing === undefined ? null : validateRouting(input.routing);
   const now = timestamp(input.evaluated_at);
   if (now === null) throw new TypeError('evaluated_at must be a valid RFC 3339 timestamp');
   const item = input.item;
-  const decision = { input_error: itemErrors(item), affiliation: null, label_changes: { remove: [], add: [] },
-    alert_eligible: false, alert_request_needed: false, message_text: null, diagnostics: [] };
+  const decision = { input_error: itemErrors(item), affiliation: null, label_changes: { remove: [], add: [] }, diagnostics: [] };
   if (decision.input_error.length) return decision;
   const reviews = Array.isArray(input.reviewed_decisions) ? input.reviewed_decisions : [];
   const diagnostics = input.reviewed_decisions !== undefined && !Array.isArray(input.reviewed_decisions)
@@ -121,18 +108,5 @@ export function planIntake(input) {
   const selectedLabel = `affiliation/${affiliation}`;
   const remove = item.labels.filter(label => MANAGED_LABELS.includes(label) && label !== selectedLabel);
   const add = item.labels.includes(selectedLabel) ? [] : [selectedLabel];
-  const eligible = affiliation === 'external' || affiliation === 'unverified';
-  const requested = item.labels.includes(REQUEST_LABEL);
-  if (requested) diagnostics.push('existing_request_requires_delivery_reconciliation');
-  let message = null;
-  if (eligible && routing) {
-    const kind = item.kind === 'pr' ? 'PR' : 'issue';
-    const status = item.state === 'closed' ? 'already closed' : 'open';
-    const draft = item.kind === 'pr' && item.draft ? '; draft' : '';
-    const category = affiliation === 'external' ? 'reviewed external' : 'affiliation unverified';
-    const url = `https://github.com/${REPOSITORY}/${item.kind === 'pr' ? 'pull' : 'issues'}/${item.number}`;
-    message = `${routing.mention_user_ids.map(id => `<@${id}>`).join(' ')} Please review ${kind} #${item.number} (${category}; ${status}${draft}).\nAuthor: ${author.human ? author.login : 'author unavailable'}\n<${url}|Open GitHub item>`;
-  }
-  return { ...decision, affiliation, label_changes: { remove, add }, alert_eligible: eligible,
-    alert_request_needed: eligible && !requested, message_text: message, diagnostics: [...new Set(diagnostics)] };
+  return { ...decision, affiliation, label_changes: { remove, add }, diagnostics: [...new Set(diagnostics)] };
 }

@@ -1,4 +1,4 @@
-# Classification and optional alerts require separate pilot activation.
+# Affiliation classification requires explicit pilot activation.
 name: Contribution intake pilot
 
 on:
@@ -36,14 +36,9 @@ jobs:
           node-version: '24.20.0'
           package-manager-cache: false
 
-      # Keep private routing and receipt values inside one process: step inputs,
-      # environment values and outputs can otherwise appear in public run logs.
-      - name: Classify and optionally notify
+      - name: Classify affiliation
         env:
           HEALTH_VALIDATION_APPLY_LABELS: 'true'
-          HEALTH_VALIDATION_ALERTS_ENABLED: ${{ vars.HEALTH_VALIDATION_ALERTS_ENABLED }}
           GITHUB_TOKEN: ${{ github.token }}
-          HEALTH_VALIDATION_SLACK_BOT_TOKEN: ${{ secrets.HEALTH_VALIDATION_SLACK_BOT_TOKEN }}
-          HEALTH_VALIDATION_INTAKE_ROUTING_JSON: ${{ secrets.HEALTH_VALIDATION_INTAKE_ROUTING_JSON }}
           HEALTH_VALIDATION_REVIEWED_DECISIONS_JSON: ${{ secrets.HEALTH_VALIDATION_REVIEWED_DECISIONS_JSON }}
         run: node tools/contributor-intake/actions-intake.mjs intake

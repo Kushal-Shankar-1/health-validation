@@ -3,9 +3,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planIntake, validateRouting } from './intake-plan.mjs';
+import { planIntake } from './intake-plan.mjs';
 
-const ROUTING = { channel_id: 'C0123456789', mention_user_ids: ['U0123456789', 'U9876543210'] };
 const NOW = '2026-10-02T05:00:00Z';
 function item(overrides = {}) {
   return {
@@ -21,7 +20,7 @@ function item(overrides = {}) {
 }
 function input(overrides = {}) {
   return {
-    evaluated_at: NOW, routing: ROUTING, item: item(), reviewed_decisions: [], ...overrides,
+    evaluated_at: NOW, item: item(), reviewed_decisions: [], ...overrides,
   };
 }
 function review(overrides = {}) {
@@ -36,21 +35,16 @@ function review(overrides = {}) {
 test('missing reviews and forged NVIDIA email stay unverified and visible', () => {
   const result = planIntake(input());
   assert.equal(result.affiliation, 'unverified');
-  assert.equal(result.alert_eligible, true);
-  assert.equal(result.alert_request_needed, true);
   assert.deepEqual(result.label_changes, {
     remove: ['affiliation/external'], add: ['affiliation/unverified'],
   });
   assert.deepEqual(result.diagnostics, []);
-  assert.deepEqual(Object.keys(result).sort(), ['affiliation', 'alert_eligible', 'alert_request_needed',
-    'diagnostics', 'input_error', 'label_changes', 'message_text']);
+  assert.deepEqual(Object.keys(result).sort(), ['affiliation', 'diagnostics', 'input_error', 'label_changes']);
 });
 
-test('current numeric-ID NVIDIA review suppresses the opening alert', () => {
+test('current numeric-ID NVIDIA review establishes affiliation', () => {
   const result = planIntake(input({ reviewed_decisions: [review({ affiliation: 'nvidia' })] }));
   assert.equal(result.affiliation, 'nvidia');
-  assert.equal(result.alert_eligible, false);
-  assert.equal(result.message_text, null);
 });
 
 test('labels do not lock derived affiliation and unrelated metadata survives', () => {
@@ -63,10 +57,9 @@ test('labels do not lock derived affiliation and unrelated metadata survives', (
   assert.deepEqual(data, before);
 });
 
-test('current external review remains alert eligible', () => {
+test('current external review establishes affiliation', () => {
   const result = planIntake(input({ reviewed_decisions: [review()] }));
   assert.equal(result.affiliation, 'external');
-  assert.equal(result.alert_request_needed, true);
 });
 
 test('expired review cannot establish external status', () => {
@@ -83,11 +76,16 @@ test('multiple current revisions force unresolved review', () => {
 for (const [name, changes] of [
   ['missing expiry', { expires_at: undefined }],
   ['missing reviewer', { reviewed_by: '' }],
+  ['missing evidence reference', { evidence_ref: '' }],
+  ['missing revision', { revision: '' }],
+  ['string author ID', { author_id: '1001' }],
+  ['fractional author ID', { author_id: 1001.5 }],
+  ['expiry before review', { expires_at: '2026-09-30T12:00:00Z' }],
   ['invalid affiliation', { affiliation: 'internal' }],
   ['future review', { reviewed_at: '2026-10-03T05:00:00Z' }],
   ['invalid date', { reviewed_at: '2026-02-31T05:00:00Z' }],
 ]) {
-  test(`relevant malformed review (${name}) cannot suppress`, () => {
+  test(`relevant malformed review (${name}) cannot establish affiliation`, () => {
     const data = input({ reviewed_decisions: [review(changes)] });
     assert.equal(planIntake(data).affiliation, 'unverified');
   });
@@ -118,45 +116,32 @@ for (const [name, user] of [
   ['invalid login', { id: 2003, login: '<!here>', type: 'User' }],
   ['unknown type', { id: 2003, login: 'outside-user', type: 'Organization' }],
 ]) {
-  test(`${name} author remains visible with safe fallback`, () => {
+  test(`${name} author remains unverified`, () => {
     const result = planIntake(input({ item: item({ user }) }));
     assert.equal(result.affiliation, 'unverified');
-    assert.ok(result.message_text.includes('Author: author unavailable'));
-    assert.equal(result.alert_eligible, true);
   });
 }
 
-test('actual contribution Bot suppresses; labeling sender does not decide author identity', () => {
+test('contribution Bot account type decides affiliation; labeling sender does not', () => {
   const bot = planIntake(input({ item: item({ user: { id: 100, login: 'dependabot[bot]', type: 'Bot' } }) }));
-  assert.equal(bot.affiliation, 'bot'); assert.equal(bot.alert_eligible, false);
+  assert.equal(bot.affiliation, 'bot');
   const human = planIntake(input({ item: item({ sender: { type: 'Bot' } }) }));
-  assert.equal(human.affiliation, 'unverified'); assert.equal(human.alert_eligible, true);
+  assert.equal(human.affiliation, 'unverified');
 });
 
 test('draft and closed PRs retain state without mutating creation time', () => {
   const data = input({ item: item({ kind: 'pr', state: 'closed', draft: true }) });
   const result = planIntake(data);
-  assert.ok(result.message_text.includes('PR #23 (affiliation unverified; already closed; draft)'));
+  assert.equal(result.affiliation, 'unverified');
   assert.equal(data.item.created_at, '2026-09-24T12:00:00Z');
-  assert.ok(result.message_text.includes('/pull/23|Open GitHub item>'));
+  assert.equal(data.item.state, 'closed');
+  assert.equal(data.item.draft, true);
 });
 
-test('message contains only configured mentions and canonical link; hostile title/company omitted', () => {
-  const result = planIntake(input({ reviewed_decisions: [review({ company: '<!everyone> https://evil.invalid' })] }));
-  const text = result.message_text;
-  assert.equal((text.match(/<@/g) ?? []).length, 2);
-  assert.ok(text.includes('<@U0123456789> <@U9876543210>'));
-  assert.ok(text.includes('https://github.com/dsx-ai-factory/health-validation/issues/23'));
-  assert.equal(text.includes('evil.invalid'), false);
-  assert.equal(text.includes('<!'), false);
-});
-
-test('existing request requires reconciliation without another alert intent', () => {
+test('an existing old marker remains an unrelated label', () => {
   const marked = planIntake(input({ item: item({ labels: ['bug', 'affiliation/unverified', 'triage/alert-requested'] }), reviewed_decisions: [review()] }));
   assert.equal(marked.affiliation, 'external');
-  assert.equal(marked.alert_eligible, true);
-  assert.equal(marked.alert_request_needed, false);
-  assert.ok(marked.diagnostics.includes('existing_request_requires_delivery_reconciliation'));
+  assert.deepEqual(marked.diagnostics, []);
   assert.equal(marked.label_changes.remove.includes('triage/alert-requested'), false);
   assert.equal(marked.label_changes.add.includes('triage/alert-requested'), false);
 });
@@ -175,23 +160,19 @@ for (const nodeId of ['MDU6SXNzdWUxMjM=', 'MDExOlB1bGxSZXF1ZXN0MQ==']) {
   test(`opaque legacy GitHub node ID ${nodeId} remains usable`, () => {
     const result = planIntake(input({ item: item({ node_id: nodeId }) }));
     assert.deepEqual(result.input_error, []);
-    assert.equal(result.alert_request_needed, true);
   });
 }
 
 for (const user of [{ type: 'Bot' }, { type: 'Bot', id: 0, login: 'unknown' }]) {
-  test(`known Bot account type with incomplete identity ${JSON.stringify(user)} remains excluded`, () => {
+  test(`known Bot account type with incomplete identity ${JSON.stringify(user)} retains bot affiliation`, () => {
     const result = planIntake(input({ item: item({ user }) }));
     assert.equal(result.affiliation, 'bot');
-    assert.equal(result.alert_request_needed, false);
-    assert.equal(result.message_text, null);
   });
 }
 
-test('fractional User ID remains unverified with an unavailable-author message', () => {
+test('fractional User ID remains unverified', () => {
   const result = planIntake(input({ item: item({ user: { id: 1.5, login: 'outside-user', type: 'User' } }) }));
   assert.equal(result.affiliation, 'unverified');
-  assert.ok(result.message_text.includes('Author: author unavailable'));
 });
 
 for (const [name, patch] of [
@@ -207,77 +188,30 @@ for (const [name, patch] of [
   test(`${name} is a visible input error without proposed writes`, () => {
     const result = planIntake(input({ item: item(patch) }));
     assert.ok(result.input_error.length > 0);
-    assert.equal(result.alert_eligible, false);
     assert.deepEqual(result.label_changes, { remove: [], add: [] });
-    assert.equal(result.message_text, null);
   });
 }
 
 test('malformed reviewed collection preserves unknown intake', () => {
   const result = planIntake(input({ reviewed_decisions: {} }));
   assert.equal(result.affiliation, 'unverified');
-  assert.equal(result.alert_eligible, true);
   assert.ok(result.diagnostics.includes('reviewed_decisions_malformed'));
 });
 
 test('a sparse label array remains an invalid input without proposed writes', () => {
   const result = planIntake(input({ item: item({ labels: Array(1) }) }));
   assert.ok(result.input_error.includes('invalid_labels'));
-  assert.equal(result.alert_eligible, false);
   assert.deepEqual(result.label_changes, { remove: [], add: [] });
-  assert.equal(result.message_text, null);
 });
 
-test('classification-only planning does not require Slack routing', () => {
-  const data = input(); delete data.routing;
-  const result = planIntake(data);
-  assert.equal(result.affiliation, 'unverified');
-  assert.deepEqual(result.label_changes, {
-    remove: ['affiliation/external'], add: ['affiliation/unverified'],
-  });
-  assert.equal(result.alert_eligible, true);
-  assert.equal(result.message_text, null);
-});
-
-test('planner emits only the configured recipients when routing is supplied', () => {
-  const result = planIntake(input());
-  assert.match(result.message_text, /<@U0123456789> <@U9876543210>/);
-});
-
-for (const [name, routing] of [
-  ['null', null], ['text', 'C0123456789'],
-  ['invalid channel', { ...ROUTING, channel_id: 'general' }],
-  ['direct message', { ...ROUTING, channel_id: 'D0123456789' }],
-  ['short channel', { ...ROUTING, channel_id: 'C1' }],
-  ['channel whitespace', { ...ROUTING, channel_id: ' C0123456789' }],
-  ['channel syntax', { ...ROUTING, channel_id: 'C0123456789><!everyone>' }],
-  ['missing mentions', { channel_id: 'C0123456789' }],
-  ['empty mentions', { ...ROUTING, mention_user_ids: [] }],
-  ['sparse mentions', { ...ROUTING, mention_user_ids: Array(1) }],
-  ['mention text', { ...ROUTING, mention_user_ids: ['@here'] }],
-  ['mention syntax', { ...ROUTING, mention_user_ids: ['U0123456789> <!everyone>'] }],
-  ['mention whitespace', { ...ROUTING, mention_user_ids: [' U0123456789'] }],
-  ['duplicate mentions', { ...ROUTING, mention_user_ids: ['U0123456789', 'U0123456789'] }],
-  ['too many mentions', { ...ROUTING, mention_user_ids: Array.from({ length: 11 }, (_, i) => `U${String(i).padStart(9, '0')}`) }],
+for (const metadata of [
+  { author_association: 'MEMBER' }, { company: 'NVIDIA' },
+  { commit_email: 'forged@nvidia.com' }, { codeowners: ['outside-user'] },
+  { team_membership: 'maintainer', organization_membership: true },
 ]) {
-  test(`invalid routing (${name}) is rejected`, () => {
-    assert.throws(() => planIntake(input({ routing })), /routing/i);
+  test('access roles and profile metadata never establish employment: ' + JSON.stringify(metadata), () => {
+    const result = planIntake(input({ item: item({ ...metadata, user: { ...item().user, ...metadata } }) }));
+    assert.equal(result.affiliation, 'unverified');
+    assert.deepEqual(result.label_changes.add, ['affiliation/unverified']);
   });
 }
-
-test('routing validator accepts one through ten opaque unique recipients and copies input', () => {
-  const one = { channel_id: 'C0123456789', mention_user_ids: ['U0123456789'] };
-  assert.deepEqual(validateRouting(one), one);
-  const ten = { channel_id: 'C9876543210', mention_user_ids: Array.from({ length: 10 }, (_, i) => `U${String(i).padStart(9, '0')}`) };
-  const validated = validateRouting(ten);
-  assert.deepEqual(validated, ten);
-  validated.mention_user_ids.pop();
-  assert.equal(ten.mention_user_ids.length, 10);
-});
-
-test('routing accepts enterprise users and private conversation IDs', () => {
-  const routing = { channel_id: 'G0123456789', mention_user_ids: ['U0123456789', 'W9876543210'] };
-  assert.deepEqual(validateRouting(routing), routing);
-  assert.match(planIntake(input({ routing })).message_text, /<@U0123456789> <@W9876543210>/);
-  assert.throws(() => validateRouting(undefined), /routing/i);
-});
