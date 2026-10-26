@@ -1,7 +1,9 @@
 # Contribution intake
 
 On new issue and PR openings, including draft PRs, reviewed code from `main`
-fetches current GitHub metadata and maintains one `affiliation/*` label.
+fetches current GitHub metadata and maintains one `affiliation/*` label. GitHub's
+item type distinguishes issues from PRs; the affiliation label distinguishes
+NVIDIA (internal) from external authors.
 Classification starts disabled. It needs only GitHub access and private reviewed
 affiliation evidence. The existing GitHub Slack subscription owns notifications
 separately; this workflow has no Slack transport or configuration.
@@ -10,27 +12,30 @@ separately; this workflow has no Slack transport or configuration.
 
 The labels are `affiliation/nvidia`, `affiliation/external`,
 `affiliation/unverified` and `affiliation/bot`. Only those four labels may be added
-or removed. All other labels and assignees are preserved. The Task / Question form
-also applies the existing `needs-triage` label.
+or removed. All other labels and assignees are preserved. Unverified means the
+author's affiliation needs review, not that the author is external. Bots have
+their own label.
 
-- [Open external items](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aopen%20label%3Aaffiliation%2Fexternal)
+- [Open NVIDIA issues](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aissue%20is%3Aopen%20label%3Aaffiliation%2Fnvidia)
+- [Open external issues](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aissue%20is%3Aopen%20label%3Aaffiliation%2Fexternal)
+- [Open NVIDIA PRs](https://github.com/dsx-ai-factory/health-validation/pulls?q=is%3Apr%20is%3Aopen%20label%3Aaffiliation%2Fnvidia)
+- [Open external PRs](https://github.com/dsx-ai-factory/health-validation/pulls?q=is%3Apr%20is%3Aopen%20label%3Aaffiliation%2Fexternal)
 - [Open unverified items](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aopen%20label%3Aaffiliation%2Funverified)
 - [Open items without an affiliation label](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aopen%20-label%3Aaffiliation%2Fnvidia%20-label%3Aaffiliation%2Fexternal%20-label%3Aaffiliation%2Funverified%20-label%3Aaffiliation%2Fbot)
-- [Open items needing triage](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aopen%20label%3Aneeds-triage)
-- [Unassigned open issues](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aissue%20is%3Aopen%20no%3Aassignee)
-- [Ready PRs without approval](https://github.com/dsx-ai-factory/health-validation/pulls?q=is%3Apr%20is%3Aopen%20draft%3Afalse%20-review%3Aapproved)
 - [All open issues and PRs](https://github.com/dsx-ai-factory/health-validation/issues?q=is%3Aopen)
 
-Use the all-open view to include drafts, approved PRs awaiting merge and items
-awaiting replies. Maintainers review acknowledgements and ownership manually;
-unassigned status and review filters alone cannot establish those facts.
+PR views include drafts for intake. Review metrics may exclude drafts separately.
+Check the unverified and unlabeled views for unresolved identities or failed runs.
 
 ## Private affiliation evidence
 
 Only reviewed evidence tied to the author's numeric GitHub account ID establishes
 NVIDIA or external status. Access roles, CODEOWNERS, team or organization
 membership, `author_association`, labels, profile company and commit email cannot
-establish employment. Bot status comes from the author's GitHub account type.
+establish NVIDIA affiliation on their own. Bot status comes from the author's
+GitHub account type. Use an approved corporate account directory or other
+verified identity evidence during review. A missing directory entry or hidden
+email does not prove external status; confirm an external decision explicitly.
 Missing, malformed, conflicting, expired or future-dated relevant evidence leaves
 humans unverified. A numeric ID survives a valid login rename; a reused login
 cannot transfer another account's affiliation.
@@ -59,6 +64,22 @@ Missing, malformed or non-array registry JSON produces a generic warning and
 leaves humans unverified. An empty array also leaves every human unverified.
 Maintainers review evidence and corrections manually; there is no directory sync.
 
+## Corrections and failed runs
+
+After updating the private registry, start a new **Contribution intake pilot**
+run from `main` with the item type and number. This also handles a missed opening
+or an item created before activation. The command reads current metadata and
+evidence, corrects only affiliation labels, and leaves closed items closed:
+
+```shell
+gh workflow run contributor-intake.yml --repo dsx-ai-factory/health-validation \
+  --ref main -f kind=issue -f number=123
+```
+
+GitHub requests retry transient failures up to three attempts. Rate-limit delays
+over one minute stop the run instead of retrying early. A failed run can leave a
+partial label correction; start a new run after the failure or evidence is fixed.
+
 ## Supervised activation and rollback
 
 1. Review and merge the disabled workflow and scripts into `main`.
@@ -78,7 +99,7 @@ cancel an in-progress intake run if needed. Existing labels remain; maintainers
 can correct affiliation labels manually. The separate native Slack feed remains
 configured independently.
 
-The workflow handles openings only. It has no backfill or later affiliation
-refresh, assignment, priority, acknowledgement or response tracking. Labels do
-not establish a response SLA or change published support policy; engineering
-triage and follow-up remain manual.
+The workflow handles openings and explicit one-item corrections. It has no
+scheduled backfill or affiliation refresh, assignment, priority, acknowledgement
+or response tracking. Labels do not establish a response SLA or change published
+support policy; engineering triage and follow-up remain manual.

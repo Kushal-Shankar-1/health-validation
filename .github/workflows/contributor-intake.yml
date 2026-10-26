@@ -6,6 +6,17 @@ on:
     types: [opened]
   pull_request_target:
     types: [opened]
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: Item type
+        required: true
+        type: choice
+        options: [issue, pr]
+      number:
+        description: Issue or PR number to classify with current evidence
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -13,12 +24,15 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: contribution-intake-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
+  group: contribution-intake-${{ github.repository }}-${{ github.event.inputs.number || github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
   intake:
-    if: github.repository == 'dsx-ai-factory/health-validation' && vars.HEALTH_VALIDATION_INTAKE_ENABLED == 'true'
+    if: >-
+      github.repository == 'dsx-ai-factory/health-validation' &&
+      vars.HEALTH_VALIDATION_INTAKE_ENABLED == 'true' &&
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openingFromActions, prepareActionsOpening, createGitHubClient } from './actions-intake.mjs';
+import { openingFromActions, classifyFromActions, createGitHubClient } from './actions-intake.mjs';
 
 const REPO = { id: 1295779810, full_name: 'dsx-ai-factory/health-validation' };
 const NODE_RUNTIME_KEYS = ['JS_BINARY__NODE_BINARY', 'JS_BINARY__NODE_PATCHES', 'JS_BINARY__NODE_WRAPPER',
@@ -48,14 +48,14 @@ test('comments and subsequent PR events do not read or write GitHub', async () =
   const github = api();
   github.readItem = async () => { throw new Error('unexpected GitHub read'); };
   for (const patch of [{ eventName: 'issue_comment' }, { payload: event({ action: 'synchronize' }) }]) {
-    assert.deepEqual(await prepareActionsOpening(args(patch), github), { status: 'ignored' });
+    assert.deepEqual(await classifyFromActions(args(patch), github), { status: 'ignored' });
   }
   assert.deepEqual(github.writes, []);
 });
 
 test('classification returns only a decision and writes affiliation without other metadata', async () => {
   const github = api();
-  const result = await prepareActionsOpening(args(), github);
+  const result = await classifyFromActions(args(), github);
   assert.equal(result.status, 'classified');
   assert.equal(result.decision.affiliation, 'unverified');
   assert.deepEqual(Object.keys(result).sort(), ['decision', 'status']);
@@ -66,7 +66,7 @@ test('fresh reviewed metadata corrects affiliation while preserving unrelated la
   const current = raw({ labels: [{ name: 'affiliation/unverified' }, { name: 'bug' }, { name: 'triage/alert-requested' }] });
   const before = structuredClone(current);
   const github = api(current);
-  const result = await prepareActionsOpening(args({ reviewedDecisions: [review()] }), github);
+  const result = await classifyFromActions(args({ reviewedDecisions: [review()] }), github);
   assert.equal(result.decision.affiliation, 'external');
   assert.deepEqual(github.writes, [
     { op: 'add', number: 17, labels: ['affiliation/external'] },
@@ -79,7 +79,7 @@ test('fresh reviewed metadata corrects affiliation while preserving unrelated la
 
 test('repeat classification with an existing old marker performs no label writes', async () => {
   const github = api(raw({ labels: [{ name: 'affiliation/unverified' }, { name: 'triage/alert-requested' }] }));
-  assert.equal((await prepareActionsOpening(args(), github)).status, 'classified');
+  assert.equal((await classifyFromActions(args(), github)).status, 'classified');
   assert.deepEqual(github.writes, []);
 });
 
@@ -91,7 +91,7 @@ test('fresh author account type and numeric evidence determine every affiliation
     [raw({ user: { id: 1002, login: 'outside-user', type: 'User' } }), [review()], 'unverified'],
   ]) {
     const github = api(current);
-    const result = await prepareActionsOpening(args({ reviewedDecisions: reviews }), github);
+    const result = await classifyFromActions(args({ reviewedDecisions: reviews }), github);
     assert.equal(result.status, 'classified');
     assert.equal(result.decision.affiliation, affiliation);
     assert.deepEqual(github.writes, [{ op: 'add', number: 17, labels: [`affiliation/${affiliation}`] }]);
@@ -108,14 +108,14 @@ for (const [name, patch] of [
 ]) {
   test(`invalid authoritative metadata (${name}) prevents label writes`, async () => {
     const github = api(raw(patch));
-    await assert.rejects(prepareActionsOpening(args(), github), /identity|scope|metadata/);
+    await assert.rejects(classifyFromActions(args(), github), /identity|scope|metadata/);
     assert.deepEqual(github.writes, []);
   });
 }
 
 test('a failed affiliation write is surfaced', async () => {
   const github = api(); github.addLabels = async () => { throw new Error('synthetic write failure'); };
-  await assert.rejects(prepareActionsOpening(args(), github), /write failure/);
+  await assert.rejects(classifyFromActions(args(), github), /write failure/);
 });
 
 test('GitHub adapter fixes scope, uses JSON bodies and preserves unrelated labels through additive requests', async () => {
@@ -178,7 +178,7 @@ for (const [name, response] of [
         return JSON.parse(options.body).labels.map(name => ({ name }));
       } };
     } });
-    await assert.rejects(prepareActionsOpening(args(), github), error =>
+    await assert.rejects(classifyFromActions(args(), github), error =>
       /unverified|reconcile/i.test(error.message) && !error.message.includes('PRIVATE_REMOVAL_RESPONSE'));
     assert.deepEqual(calls.map(call => call.method), ['GET', 'POST', 'DELETE']);
   });
@@ -194,7 +194,7 @@ test('unreadable label removal response stops after the affiliation write withou
       return JSON.parse(options.body).labels.map(name => ({ name }));
     } };
   } });
-  await assert.rejects(prepareActionsOpening(args(), github), error =>
+  await assert.rejects(classifyFromActions(args(), github), error =>
     /invalid|reconcile/i.test(error.message) && !error.message.includes('PRIVATE_REMOVAL_BODY'));
   assert.deepEqual(calls, ['GET', 'POST', 'DELETE']);
 });
@@ -209,7 +209,7 @@ test('verified remaining labels complete affiliation correction after affiliatio
       return JSON.parse(options.body).labels.map(name => ({ name }));
     } };
   } });
-  const result = await prepareActionsOpening(args(), github);
+  const result = await classifyFromActions(args(), github);
   assert.equal(result.status, 'classified');
   assert.deepEqual(calls, ['GET', 'POST', 'DELETE']);
 });
@@ -364,4 +364,124 @@ test('unsupported CLI mode is refused without API access', () => {
   assert.equal(run.status, 1);
   assert.deepEqual(run.calls, []);
   assert.equal(run.output, '');
+});
+
+test('manual classification uses current evidence for an issue or draft PR', async () => {
+  for (const kind of ['issue', 'pr']) {
+    const github = api(raw({ labels: [{ name: 'bug' }, { name: 'affiliation/unverified' }] }));
+    const result = await classifyFromActions(args({ eventName: 'workflow_dispatch',
+      payload: { repository: REPO, inputs: { kind, number: '17' } },
+      reviewedDecisions: [review()] }), github);
+    assert.equal(result.status, 'classified');
+    assert.equal(result.decision.affiliation, 'external');
+    assert.deepEqual(github.writes, [
+      { op: 'add', number: 17, labels: ['affiliation/external'] },
+      { op: 'remove', number: 17, label: 'affiliation/unverified' },
+    ]);
+  }
+});
+
+for (const inputs of [
+  {}, { kind: 'comment', number: '17' }, { kind: 'pr', number: 17 },
+  ...['0', '-1', '1.5', '17x', '17/../../secrets', '9007199254740992']
+    .map(number => ({ kind: 'issue', number })),
+]) {
+  test(`invalid manual target ${JSON.stringify(inputs)} fails before API access`, async () => {
+    const github = api();
+    github.readItem = async () => { throw new Error('unexpected API access'); };
+    await assert.rejects(classifyFromActions(args({ eventName: 'workflow_dispatch',
+      payload: { repository: REPO, inputs } }), github), /manual target/);
+    assert.deepEqual(github.writes, []);
+  });
+}
+
+test('manual classification rejects a different repository', async () => {
+  const github = api();
+  github.readItem = async () => { throw new Error('unexpected API access'); };
+  await assert.rejects(classifyFromActions(args({ eventName: 'workflow_dispatch',
+    payload: { repository: { ...REPO, id: 1 }, inputs: { kind: 'pr', number: '17' } } }), github), /scope/);
+  assert.deepEqual(github.writes, []);
+});
+
+test('a PR cannot be classified through the manual issue route', async () => {
+  const github = api(raw({ pull_request: { url: 'https://api.github.com/example' } }));
+  await assert.rejects(classifyFromActions(args({ eventName: 'workflow_dispatch',
+    payload: { repository: REPO, inputs: { kind: 'issue', number: '17' } } }), github), /kind/);
+  assert.deepEqual(github.writes, []);
+});
+
+test('manual CLI classification fetches authoritative issue metadata', () => {
+  const run = runIntakeCli({ eventName: 'workflow_dispatch',
+    payload: { repository: REPO, inputs: { kind: 'issue', number: '17' } } });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.calls[0]?.url, 'https://api.github.com/repos/dsx-ai-factory/health-validation/issues/17');
+  assert.deepEqual(run.calls.at(-1)?.payload.labels, ['affiliation/unverified']);
+});
+
+test('a transient removal failure converges to one affiliation without replacing other labels', async () => {
+  const labels = new Set(['bug', 'affiliation/unverified']);
+  const waits = [];
+  let removalAttempts = 0;
+  const github = createGitHubClient({ token: 'synthetic-token', sleepFn: async ms => { waits.push(ms); },
+    fetchFn: async (url, options) => {
+      if (options.method === 'GET') return { ok: true, json: async () => raw({ labels: [...labels].map(name => ({ name })) }) };
+      if (options.method === 'POST') JSON.parse(options.body).labels.forEach(name => labels.add(name));
+      if (options.method === 'DELETE') {
+        if (++removalAttempts === 1) return { ok: false, status: 503 };
+        labels.delete('affiliation/unverified');
+      }
+      return { ok: true, json: async () => [...labels].map(name => ({ name })) };
+    } });
+  const result = await classifyFromActions(args({ reviewedDecisions: [review()] }), github);
+  assert.equal(result.status, 'classified');
+  assert.deepEqual([...labels], ['bug', 'affiliation/external']);
+  assert.deepEqual(waits, [1000]);
+});
+
+test('a temporary network failure is retried without exposing its message', async () => {
+  let attempts = 0;
+  const waits = [];
+  const github = createGitHubClient({ token: 'synthetic-token', sleepFn: async ms => { waits.push(ms); },
+    fetchFn: async () => {
+      if (++attempts === 1) throw new Error('PRIVATE_NETWORK_DETAIL');
+      return { ok: true, json: async () => raw() };
+    } });
+  assert.equal((await github.readItem('pr', 17)).number, 17);
+  assert.equal(attempts, 2);
+  assert.deepEqual(waits, [1000]);
+});
+
+for (const status of [429, 403]) {
+  test(`HTTP ${status} honors the server retry delay`, async () => {
+    const waits = [];
+    let attempts = 0;
+    const github = createGitHubClient({ token: 'synthetic-token', sleepFn: async ms => { waits.push(ms); },
+      fetchFn: async () => ++attempts === 1
+        ? { ok: false, status, headers: new Headers({ 'retry-after': '2' }) }
+        : { ok: true, json: async () => raw() } });
+    assert.equal((await github.readItem('issue', 17)).number, 17);
+    assert.deepEqual(waits, [2000]);
+  });
+}
+
+test('transient retries stop after three attempts and keep error bodies private', async () => {
+  let attempts = 0;
+  const waits = [];
+  const github = createGitHubClient({ token: 'synthetic-token', sleepFn: async ms => { waits.push(ms); },
+    fetchFn: async () => { attempts++; return { ok: false, status: 502,
+      json: async () => { throw new Error('PRIVATE_RESPONSE_BODY'); } }; } });
+  await assert.rejects(github.readItem('pr', 17), error =>
+    /502/.test(error.message) && !error.message.includes('PRIVATE_RESPONSE_BODY'));
+  assert.equal(attempts, 3);
+  assert.deepEqual(waits, [1000, 2000]);
+});
+
+test('a long server delay fails without retrying too early', async () => {
+  let attempts = 0;
+  const waits = [];
+  const github = createGitHubClient({ token: 'synthetic-token', sleepFn: async ms => { waits.push(ms); },
+    fetchFn: async () => { attempts++; return { ok: false, status: 429, headers: new Headers({ 'retry-after': '120' }) }; } });
+  await assert.rejects(github.readItem('pr', 17), /429/);
+  assert.equal(attempts, 1);
+  assert.deepEqual(waits, []);
 });
