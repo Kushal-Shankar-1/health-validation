@@ -64,6 +64,18 @@ Missing, malformed or non-array registry JSON produces a generic warning and
 leaves humans unverified. An empty array also leaves every human unverified.
 Maintainers review evidence and corrections manually; there is no directory sync.
 
+Before uploading a registry, check its format and current dates locally:
+
+```shell
+node tools/contributor-intake/check-registry.mjs /private/path/approved-registry.json
+```
+
+The check rejects invalid, expired, future-dated, conflicting or oversized records
+without printing their contents. It does not verify evidence or approve decisions.
+Keep the reviewed source file and history private; the Actions secret is a runtime
+copy. Name an updater and refresh records before expiry. Existing labels reflect
+the last classification; an expired record does not automatically relabel old items.
+
 ## Corrections and failed runs
 
 After updating the private registry, start a new **Contribution intake pilot**

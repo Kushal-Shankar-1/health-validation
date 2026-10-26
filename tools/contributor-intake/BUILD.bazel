@@ -21,3 +21,14 @@ js_test(
     entry_point = "actions-intake.test.mjs",
     node_options = ["--test"],
 )
+
+js_test(
+    name = "registry_test",
+    size = "small",
+    data = [
+        "check-registry.mjs",
+        "intake-plan.mjs",
+    ],
+    entry_point = "check-registry.test.mjs",
+    node_options = ["--test"],
+)

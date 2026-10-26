@@ -72,6 +72,25 @@ function reviewedAffiliation(author, reviews, now, diagnostics) {
   return current[0].affiliation;
 }
 
+export function validateReviewedDecisions(reviews, evaluatedAt) {
+  const now = timestamp(evaluatedAt);
+  if (now === null) throw new TypeError('evaluated_at must be a valid RFC 3339 timestamp');
+  if (!Array.isArray(reviews)) return [{ code: 'registry_not_array' }];
+  const errors = [], ids = new Set(), logins = new Set();
+  for (const [index, review] of reviews.entries()) {
+    const diagnostics = [];
+    const affiliation = reviewedAffiliation({ id: review?.author_id, login: review?.login }, [review], now, diagnostics);
+    if (!['nvidia', 'external'].includes(affiliation)) {
+      errors.push({ record: index + 1, code: diagnostics[0] ?? 'review_malformed' });
+    } else if (ids.has(review.author_id) || logins.has(normalizeLogin(review.login))) {
+      errors.push({ record: index + 1, code: 'review_conflict' });
+    }
+    ids.add(review?.author_id);
+    logins.add(normalizeLogin(review?.login));
+  }
+  return errors;
+}
+
 function itemErrors(item) {
   if (!isRecord(item)) return ['item_not_object'];
   const errors = [];
