@@ -23,7 +23,7 @@ async function api(path, method = 'GET', body) {
       'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`Sandbox API ${method} failed with HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`Sandbox API ${method} ${path} failed with HTTP ${response.status}`);
   return response.status === 204 ? null : response.json();
 }
 const client = createGitHubClient({ token });
@@ -61,6 +61,8 @@ async function check(kind, number, evidence, expected, manual = false) {
 const originals = [];
 const createdLabels = [];
 let botIssue;
+let stage = 'validate fixtures';
+let failure;
 try {
   // Validate every pre-created target before changing any labels.
   for (const [kind, number] of [['issue', issue], ['pr', pr]]) {
@@ -73,6 +75,7 @@ try {
     if (kind === 'pr') assert.equal(raw.draft, true);
     originals.push({ kind, number, labels: raw.labels.map(label => label.name) });
   }
+  stage = 'create sandbox labels';
   for (const name of ['nvidia', 'external', 'unverified', 'bot'].map(value => `affiliation/${value}`).concat('priority/P2')) {
     const labels = await api('/labels?per_page=100');
     if (!labels.some(label => label.name === name)) {
@@ -82,9 +85,11 @@ try {
       createdLabels.push(name);
     }
   }
+  stage = 'seed priority labels';
   for (const { number } of originals) {
     await api(`/issues/${number}/labels`, 'POST', { labels: ['priority/P2'] });
   }
+  stage = 'classify human issue and draft PR';
   for (const { kind, number } of originals) {
     const raw = await client.readItem(kind, number);
     await check(kind, number, [], 'unverified');
@@ -100,6 +105,7 @@ try {
     await check(kind, number, [expired], 'unverified');
     await check(kind, number, [review(raw.user, 'external')], 'external', true);
   }
+  stage = 'classify bot issue';
   botIssue = await api('/issues', 'POST', {
     title: `${prefix} bot-created fixture`,
     body: 'Temporary automation test in a personal fork. No support request or actual affiliation evidence.',
@@ -113,6 +119,9 @@ try {
   assert.equal(writes, count);
   console.log('PASS wrong repository: rejected before writes');
   console.log('All live API smoke checks passed. Synthetic evidence does not establish anyone\'s affiliation.');
+} catch (error) {
+  failure = error;
+  console.error(`Sandbox failure during ${stage}: ${error.message}`);
 } finally {
   // Remove synthetic affiliation assertions even if a test fails.
   const cleanup = originals.map(({ number, labels }) =>
@@ -124,6 +133,8 @@ try {
   const restored = await Promise.allSettled(cleanup);
   const labels = await Promise.allSettled(createdLabels.map(name =>
     api(`/labels/${encodeURIComponent(name)}`, 'DELETE')));
-  assert.ok([...restored, ...labels].every(result => result.status === 'fulfilled'),
-    'Sandbox cleanup incomplete; reconcile all test fixtures from the supervising session');
+  const failures = [...restored, ...labels].filter(result => result.status === 'rejected');
+  for (const result of failures) console.error(`Cleanup failure: ${result.reason.message}`);
+  if (failure) throw failure;
+  assert.equal(failures.length, 0, 'Sandbox cleanup incomplete; supervisor reconciliation required');
 }
