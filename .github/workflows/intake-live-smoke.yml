@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
   issues: write
-  pull-requests: read
+  pull-requests: write
 jobs:
   smoke:
     if: github.repository == 'Kushal-Shankar-1/health-validation'
