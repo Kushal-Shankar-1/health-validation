@@ -97,8 +97,10 @@ partial label correction; start a new run after the failure or evidence is fixed
 1. Review and merge the disabled workflow and scripts into `main`.
 2. Create the four affiliation labels and provide the private reviewed registry.
    Agree who reviews evidence, expiry and contributor corrections before use.
-3. Verify the workflow can read items and add/remove issue labels in this fixed
-   repository. The CLI also requires `HEALTH_VALIDATION_APPLY_LABELS=true` exactly;
+3. Verify the workflow can read items and add/remove affiliation labels on both
+   issues and PRs in this fixed repository. The job needs `issues: write` and
+   `pull-requests: write`. The CLI also requires
+   `HEALTH_VALIDATION_APPLY_LABELS=true` exactly;
    the workflow supplies that opt-in inside its disabled job.
 4. Set the repository variable `HEALTH_VALIDATION_INTAKE_ENABLED` to `true` exactly
    for a supervised pilot. Missing or any other value keeps the job disabled.
