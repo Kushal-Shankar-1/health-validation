@@ -133,7 +133,9 @@ try {
     env.HEALTH_VALIDATION_APPLY_LABELS = 'false';
     env.HEALTH_VALIDATION_REVIEWED_DECISIONS_JSON = '[]';
     result = spawnSync(process.execPath, [path, 'intake'], { env, encoding: 'utf8', timeout: 45000 });
-    assert.notEqual(result.status, 0);
+    assert.ifError(result.error);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Intake step failed/);
     assert.deepEqual((await client.readItem('issue', issue)).labels.map(label => label.name).filter(managed), ['affiliation/nvidia']);
     console.log('PASS CLI: disabled label application rejects changes');
   } finally { rmSync(directory, { recursive: true, force: true }); }
