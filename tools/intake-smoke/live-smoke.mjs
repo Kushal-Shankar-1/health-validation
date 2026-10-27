@@ -3,6 +3,11 @@
 
 // Isolated fork smoke test. Every affiliation record below is a synthetic fixture.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { classifyFromActions, createGitHubClient } from './actions-intake.mjs';
 
 const repository = { id: 1427862585, full_name: 'Kushal-Shankar-1/health-validation' };
@@ -105,6 +110,33 @@ try {
     await check(kind, number, [expired], 'unverified');
     await check(kind, number, [review(raw.user, 'external')], 'external', true);
   }
+  stage = 'exercise CLI evidence and activation gates';
+  const directory = mkdtempSync(join(tmpdir(), 'intake-smoke-'));
+  try {
+    const event = join(directory, 'event.json');
+    writeFileSync(event, JSON.stringify({ repository, inputs: { kind: 'issue', number: String(issue) } }), { mode: 0o600 });
+    const env = { ...process.env, GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_EVENT_PATH: event,
+      HEALTH_VALIDATION_APPLY_LABELS: 'true' };
+    delete env.HEALTH_VALIDATION_REVIEWED_DECISIONS_JSON;
+    const path = fileURLToPath(new URL('./actions-intake.mjs', import.meta.url));
+    let result = spawnSync(process.execPath, [path, 'intake'], { env, encoding: 'utf8', timeout: 45000 });
+    assert.equal(result.status, 0, 'CLI with missing evidence must classify safely');
+    assert.match(result.stderr, /evidence unavailable or malformed/i);
+    assert.deepEqual((await client.readItem('issue', issue)).labels.map(label => label.name).filter(managed), ['affiliation/unverified']);
+    console.log('PASS CLI: missing evidence warns and labels unverified');
+    const user = (await client.readItem('issue', issue)).user;
+    env.HEALTH_VALIDATION_REVIEWED_DECISIONS_JSON = JSON.stringify([review(user, 'nvidia')]);
+    result = spawnSync(process.execPath, [path, 'intake'], { env, encoding: 'utf8', timeout: 45000 });
+    assert.equal(result.status, 0, 'CLI must read supplied synthetic JSON');
+    assert.deepEqual((await client.readItem('issue', issue)).labels.map(label => label.name).filter(managed), ['affiliation/nvidia']);
+    console.log('PASS CLI: supplied synthetic JSON corrects affiliation');
+    env.HEALTH_VALIDATION_APPLY_LABELS = 'false';
+    env.HEALTH_VALIDATION_REVIEWED_DECISIONS_JSON = '[]';
+    result = spawnSync(process.execPath, [path, 'intake'], { env, encoding: 'utf8', timeout: 45000 });
+    assert.notEqual(result.status, 0);
+    assert.deepEqual((await client.readItem('issue', issue)).labels.map(label => label.name).filter(managed), ['affiliation/nvidia']);
+    console.log('PASS CLI: disabled label application rejects changes');
+  } finally { rmSync(directory, { recursive: true, force: true }); }
   stage = 'classify bot issue';
   botIssue = await api('/issues', 'POST', {
     title: `${prefix} bot-created fixture`,
