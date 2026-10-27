@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Isolated intake API smoke test
+on:
+  push:
+    branches: [test/intake-live-smoke-20261026]
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+jobs:
+  smoke:
+    if: github.repository == 'Kushal-Shankar-1/health-validation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24.20.0'
+          package-manager-cache: false
+      - name: Test fork API using synthetic records
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SMOKE_ISSUE: '1'
+          SMOKE_PR: '2'
+        run: node tools/intake-smoke/live-smoke.mjs
