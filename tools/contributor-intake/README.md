@@ -1,12 +1,9 @@
 # Contribution intake
 
-On new issue and PR openings, including draft PRs, reviewed code from `main`
-fetches current GitHub metadata and maintains one `affiliation/*` label. GitHub's
-item type distinguishes issues from PRs; the affiliation label distinguishes
-NVIDIA (internal) from external authors.
-Classification starts disabled. It needs only GitHub access and private reviewed
-affiliation evidence. The existing GitHub Slack subscription owns notifications
-separately; this workflow has no Slack transport or configuration.
+On new issue and PR openings, including drafts, trusted code from `main` reads
+the current author and maintains an `affiliation/*` label. GitHub's item type
+distinguishes issues from PRs. The pilot starts disabled. The existing GitHub
+Slack subscription handles notifications separately.
 
 ## Labels and shared views
 
@@ -27,23 +24,51 @@ their own label.
 PR views include drafts for intake. Review metrics may exclude drafts separately.
 Check the unverified and unlabeled views for unresolved identities or failed runs.
 
-## Private affiliation evidence
+## How affiliation is determined
 
-Only reviewed evidence tied to the author's numeric GitHub account ID establishes
-NVIDIA or external status. Access roles, CODEOWNERS, team or organization
-membership, `author_association`, labels, profile company and commit email cannot
-establish NVIDIA affiliation on their own. Bot status comes from the author's
-GitHub account type. Use an approved corporate account directory or other
-verified identity evidence during review. A missing directory entry or hidden
-email does not prove external status; confirm an external decision explicitly.
-Missing, malformed, conflicting, expired or future-dated relevant evidence leaves
-humans unverified. A numeric ID survives a valid login rename; a reused login
-cannot transfer another account's affiliation.
+For human authors, the workflow requests
+`GET /orgs/{org}/memberships/{username}` from GitHub, checking `dsx-ai-factory`
+first and `NVIDIA` if needed. Active membership in either organization is the
+configured positive signal for NVIDIA affiliation. Both memberships are not
+required. The response must match the author's numeric GitHub ID and the expected
+organization ID. Pending invitations do not qualify.
 
-Keep evidence and review history in private storage, outside source, logs and
-workflow artifacts. Supply one current record per author in the Actions secret
-`HEALTH_VALIDATION_REVIEWED_DECISIONS_JSON`. Every field below is required;
-these are synthetic values and reviewers must choose current review/expiry dates:
+This classifies affiliation for triage. It does not grant organization membership,
+repository access, review authority or priority. Repository collaborators,
+CODEOWNERS, `author_association`, profile company and commit email are not used
+to decide affiliation. Bot status comes from GitHub's account type.
+
+No membership match means unresolved, not external. Missing credentials and
+failed lookups produce the same unresolved result unless an independently
+reviewed exception applies. A current external exception conflicting with a
+membership match, or malformed relevant exceptions, leaves the author unverified.
+Membership checks use bounded retries; rate-limit delays over ten seconds stop
+that lookup so classification can continue.
+
+## Private configuration and exceptions
+
+Configure an approved GitHub App installed in both organizations with
+organization **Members: read** permission. Set the repository variable
+`HEALTH_VALIDATION_MEMBERSHIP_APP_CLIENT_ID` and secret
+`HEALTH_VALIDATION_MEMBERSHIP_APP_PRIVATE_KEY`. The pinned token action creates
+separate installation tokens requesting only membership-read access. Tokens are
+normally revoked after the job and expire after one hour. The repository's
+`GITHUB_TOKEN` is used separately for reading items and updating labels.
+
+If configuration is missing or token creation fails, classification still runs
+with available evidence. Full job cancellation or timeout can prevent labeling.
+Private membership visibility must be verified using the actual App installation
+credentials; a successful check with a maintainer's personal account is not enough.
+
+The optional secret `HEALTH_VALIDATION_REVIEWED_DECISIONS_JSON` holds exceptions
+for confirmed external authors or NVIDIA authors not recognized by the two
+organization checks. A maintainer must verify affiliation independently, record
+the evidence privately, and bind the decision to the numeric GitHub account ID.
+Free-text profile information and absence from a membership list are insufficient.
+No exception record is needed for an active membership match.
+
+Keep evidence and review history outside public source, logs and artifacts. These
+are synthetic values; every field is required and review/expiry dates must be current:
 
 ```json
 [
@@ -60,9 +85,10 @@ these are synthetic values and reviewers must choose current review/expiry dates
 ]
 ```
 
-Missing, malformed or non-array registry JSON produces a generic warning and
-leaves humans unverified. An empty array also leaves every human unverified.
-Maintainers review evidence and corrections manually; there is no directory sync.
+Missing or empty exception JSON means no exceptions. Malformed JSON or a non-array
+value produces a generic warning and leaves humans unverified. Expired or
+future-dated exceptions cannot establish affiliation. A valid numeric ID survives
+a login rename; reusing a login cannot transfer another account's exception.
 
 Before uploading a registry, check its format and current dates locally:
 
@@ -72,48 +98,52 @@ node tools/contributor-intake/check-registry.mjs /private/path/approved-registry
 
 The check rejects invalid, expired, future-dated, conflicting or oversized records
 without printing their contents. It does not verify evidence or approve decisions.
-Keep the reviewed source file and history private; the Actions secret is a runtime
-copy. Name an updater and refresh records before expiry. Existing labels reflect
-the last classification; an expired record does not automatically relabel old items.
+Keep the reviewed source file and history private; the secret is a runtime copy.
+Name an exception owner and refresh records before expiry. Labels reflect the
+last classification. Changed membership or expired records do not automatically
+relabel older items. No roster or directory synchronization is required.
 
 ## Corrections and failed runs
 
-After updating the private registry, start a new **Contribution intake pilot**
-run from `main` with the item type and number. This also handles a missed opening
-or an item created before activation. The command reads current metadata and
-evidence, corrects only affiliation labels, and leaves closed items closed:
+After correcting an exception, membership or failed run, start a new
+**Contribution intake pilot** run from `main` with the item type and number. This
+also handles a missed opening or an item created before activation. It reads
+current evidence, corrects only affiliation labels, and leaves closed items closed:
 
 ```shell
 gh workflow run contributor-intake.yml --repo dsx-ai-factory/health-validation \
   --ref main -f kind=issue -f number=123
 ```
 
-GitHub requests retry transient failures up to three attempts. Rate-limit delays
-over one minute stop the run instead of retrying early. A failed run can leave a
-partial label correction; start a new run after the failure or evidence is fixed.
+GitHub requests retry transient failures up to three attempts. Label-write
+rate-limit delays over one minute stop the run instead of retrying early.
+A failed write can leave a partial correction; start a new run after it is fixed.
 
 ## Supervised activation and rollback
 
 1. Review and merge the disabled workflow and scripts into `main`.
-2. Create the four affiliation labels and provide the private reviewed registry.
-   Agree who reviews evidence, expiry and contributor corrections before use.
+2. Create the four affiliation labels and configure the approved membership App.
+   Verify active private-member responses in each organization using the actual
+   installation credentials. Name an owner for exceptions and corrections.
 3. Verify the workflow can read items and add/remove affiliation labels on both
    issues and PRs in this fixed repository. The job needs `issues: write` and
    `pull-requests: write`. The CLI also requires
    `HEALTH_VALIDATION_APPLY_LABELS=true` exactly;
    the workflow supplies that opt-in inside its disabled job.
-4. Set the repository variable `HEALTH_VALIDATION_INTAKE_ENABLED` to `true` exactly
+4. Check applicable Actions event policies permit this trusted `pull_request_target`
+   workflow. Set `HEALTH_VALIDATION_INTAKE_ENABLED` to `true` exactly
    for a supervised pilot. Missing or any other value keeps the job disabled.
-5. Check normal pilot openings for reviewed NVIDIA/external authors, unverified
-   authors, Bot accounts and draft PRs. Verify unrelated labels and assignees and
-   review generic failures before wider activation.
+5. Check normal openings for DSX-only and NVIDIA-only members, reviewed external
+   authors, unknown authors, Bot accounts and draft PRs. Check conflicts and token
+   failures as well as unrelated labels and assignees before wider activation.
 
 To roll back, remove `HEALTH_VALIDATION_INTAKE_ENABLED` or set it to `false`, and
 cancel an in-progress intake run if needed. Existing labels remain; maintainers
 can correct affiliation labels manually. The separate native Slack feed remains
 configured independently.
 
-The workflow handles openings and explicit one-item corrections. It has no
-scheduled backfill or affiliation refresh, assignment, priority, acknowledgement
-or response tracking. Labels do not establish a response SLA or change published
-support policy; engineering triage and follow-up remain manual.
+The five-minute job uses a hosted runner and serializes repeated work for each
+item. It does not impose an aggregate limit across distinct issues and PRs;
+check the unlabeled queue for canceled or failed runs. It has no scheduled
+backfill, assignment, priority, acknowledgement or response tracking. Labels do
+not establish a response SLA; engineering triage and follow-up remain manual.

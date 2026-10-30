@@ -47,6 +47,46 @@ test('current numeric-ID NVIDIA review establishes affiliation', () => {
   assert.equal(result.affiliation, 'nvidia');
 });
 
+const membership = (overrides = {}) => ({ author_id: 1001, organization: 'dsx-ai-factory',
+  organization_id: 311157577, ...overrides });
+
+for (const [organization, organization_id] of [['dsx-ai-factory', 311157577], ['NVIDIA', 1728152]]) {
+  test(`authenticated membership in ${organization} independently establishes NVIDIA affiliation`, () => {
+    const result = planIntake(input({ membership: membership({ organization, organization_id }) }));
+    assert.equal(result.affiliation, 'nvidia');
+    assert.deepEqual(result.label_changes, { remove: ['affiliation/external'], add: ['affiliation/nvidia'] });
+  });
+}
+
+test('membership conflicts with a current external exception instead of silently replacing it', () => {
+  const result = planIntake(input({ membership: membership(), reviewed_decisions: [review()] }));
+  assert.equal(result.affiliation, 'unverified');
+  assert.ok(result.diagnostics.includes('affiliation_conflict'));
+});
+
+test('matching NVIDIA exception and expired external evidence do not block membership', () => {
+  for (const reviewed_decisions of [[review({ affiliation: 'nvidia' })], [review({ expires_at: NOW })]]) {
+    assert.equal(planIntake(input({ membership: membership(), reviewed_decisions })).affiliation, 'nvidia');
+  }
+});
+
+test('malformed or conflicting relevant exceptions stay unresolved despite membership', () => {
+  for (const reviewed_decisions of [null, [review({ expires_at: null })], [review(), review({ revision: 'other' })]]) {
+    assert.equal(planIntake(input({ membership: membership(), reviewed_decisions })).affiliation, 'unverified');
+  }
+});
+
+for (const value of [true, {}, membership({ author_id: 999 }), membership({ organization_id: 1 }),
+  membership({ organization: 'other' }), membership({ organization: 'NVIDIA' })]) {
+  test(`invalid or mismatched membership evidence stays unresolved: ${JSON.stringify(value)}`, () => {
+    assert.equal(planIntake(input({ membership: value })).affiliation, 'unverified');
+  });
+}
+
+test('contributor-provided membership metadata is ignored without an authenticated lookup', () => {
+  assert.equal(planIntake(input({ item: item({ membership: membership(), organization_membership: true }) })).affiliation, 'unverified');
+});
+
 test('labels do not lock derived affiliation and unrelated metadata survives', () => {
   const data = input({ item: item({ labels: ['affiliation/nvidia', 'enhancement', 'affiliation/bot'] }) });
   const before = structuredClone(data);
@@ -209,7 +249,7 @@ for (const metadata of [
   { commit_email: 'forged@nvidia.com' }, { codeowners: ['outside-user'] },
   { team_membership: 'maintainer', organization_membership: true },
 ]) {
-  test('access roles and profile metadata never establish employment: ' + JSON.stringify(metadata), () => {
+  test('item access and profile fields do not substitute for authenticated affiliation evidence: ' + JSON.stringify(metadata), () => {
     const result = planIntake(input({ item: item({ ...metadata, user: { ...item().user, ...metadata } }) }));
     assert.equal(result.affiliation, 'unverified');
     assert.deepEqual(result.label_changes.add, ['affiliation/unverified']);

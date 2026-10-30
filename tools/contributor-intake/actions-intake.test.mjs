@@ -33,6 +33,149 @@ function api(current = raw()) {
 const args = (patch = {}) => ({ eventName: 'pull_request_target', payload: event(),
   evaluatedAt: NOW, reviewedDecisions: [], ...patch });
 
+const membership = (org = 'dsx-ai-factory', overrides = {}) => ({ state: 'active', user: raw().user,
+  organization: { login: org, id: org === 'NVIDIA' ? 1728152 : 311157577 }, ...overrides });
+const membershipTokens = { 'dsx-ai-factory': 'synthetic-dsx-token', NVIDIA: 'synthetic-nvidia-token' };
+
+test('membership lookup uses separate read credentials and stable account IDs', async () => {
+  const calls = [];
+  const github = createGitHubClient({ token: 'synthetic-write-token', membershipTokens,
+    fetchFn: async (url, options) => {
+      calls.push({ url, authorization: options.headers.Authorization, method: options.method });
+      return { ok: true, status: 200, json: async () => membership() };
+    } });
+  assert.deepEqual(await github.findNvidiaMembership(raw().user), {
+    membership: { author_id: 1001, organization: 'dsx-ai-factory', organization_id: 311157577 }, unavailable: false,
+  });
+  assert.deepEqual(calls, [{ url: 'https://api.github.com/orgs/dsx-ai-factory/memberships/outside-user',
+    authorization: 'Bearer synthetic-dsx-token', method: 'GET' }]);
+});
+
+test('NVIDIA-only membership is recognized after DSX does not return a match', async () => {
+  const calls = [];
+  const github = createGitHubClient({ token: 'synthetic-write-token', membershipTokens,
+    fetchFn: async (url, options) => {
+      calls.push({ url, authorization: options.headers.Authorization });
+      return url.includes('/dsx-ai-factory/') ? { ok: false, status: 404 }
+        : { ok: true, status: 200, json: async () => membership('NVIDIA') };
+    } });
+  assert.equal((await github.findNvidiaMembership(raw().user)).membership.organization, 'NVIDIA');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].authorization, 'Bearer synthetic-nvidia-token');
+});
+
+for (const state of ['pending', 'missing']) {
+  test(`${state} membership does not establish NVIDIA or external status`, async () => {
+    const github = createGitHubClient({ token: 'synthetic-write-token', membershipTokens,
+      fetchFn: async url => state === 'missing' ? { ok: false, status: 404 }
+        : { ok: true, status: 200, json: async () => membership(url.includes('/NVIDIA/') ? 'NVIDIA' : 'dsx-ai-factory', { state }) } });
+    assert.deepEqual(await github.findNvidiaMembership(raw().user), { membership: null, unavailable: false });
+  });
+}
+
+for (const changes of [{ user: { ...raw().user, id: 999 } }, { organization: { login: 'dsx-ai-factory', id: 1 } },
+  { organization: { login: 'other', id: 311157577 } }, { state: 'invalid' }, { user: null }]) {
+  test(`malformed or mismatched GitHub membership cannot transfer affiliation: ${JSON.stringify(changes)}`, async () => {
+    const github = createGitHubClient({ token: 'synthetic-write-token', membershipTokens,
+      fetchFn: async () => ({ ok: true, status: 200, json: async () => membership('dsx-ai-factory', changes) }) });
+    assert.deepEqual(await github.findNvidiaMembership(raw().user), { membership: null, unavailable: true });
+  });
+}
+
+test('missing membership credentials do not use the repository token for organization reads', async () => {
+  const github = createGitHubClient({ token: 'synthetic-write-token', fetchFn: () => assert.fail('unexpected request') });
+  assert.deepEqual(await github.findNvidiaMembership(raw().user), { membership: null, unavailable: true });
+});
+
+test('invalid author identities do not become arbitrary organization request paths', async () => {
+  const github = createGitHubClient({ token: 'synthetic-write-token', membershipTokens,
+    fetchFn: () => assert.fail('unexpected request') });
+  for (const user of [null, { id: 1, login: '../other', type: 'User' }, { id: '1', login: 'user', type: 'User' },
+    { id: 1, login: 'dependabot[bot]', type: 'Bot' }]) {
+    assert.equal((await github.findNvidiaMembership(user)).membership, null);
+  }
+});
+
+test('membership errors are bounded and cannot create external affiliation', async () => {
+  let calls = 0;
+  const github = createGitHubClient({ token: 'synthetic-write-token', membershipTokens, sleepFn: async () => {},
+    fetchFn: async () => { calls++; return { ok: false, status: 503, json: () => { throw new Error('PRIVATE_BODY'); } }; } });
+  assert.deepEqual(await github.findNvidiaMembership(raw().user), { membership: null, unavailable: true });
+  assert.equal(calls, 6);
+});
+
+test('an unavailable first organization does not hide a valid second organization match', async () => {
+  const github = createGitHubClient({ token: 'synthetic-write-token', membershipTokens,
+    fetchFn: async url => url.includes('/dsx-ai-factory/') ? { ok: false, status: 403 }
+      : { ok: true, status: 200, json: async () => membership('NVIDIA') } });
+  assert.equal((await github.findNvidiaMembership(raw().user)).membership.organization, 'NVIDIA');
+});
+
+test('membership rate-limit waits above ten seconds do not delay the second organization', async () => {
+  const github = createGitHubClient({ token: 'synthetic-write-token', membershipTokens,
+    sleepFn: () => assert.fail('unexpected long wait'), fetchFn: async url => url.includes('/dsx-ai-factory/')
+      ? { ok: false, status: 429, headers: new Headers({ 'retry-after': '11' }) }
+      : { ok: true, status: 200, json: async () => membership('NVIDIA') } });
+  assert.equal((await github.findNvidiaMembership(raw().user)).membership.organization, 'NVIDIA');
+});
+
+test('bounded transport failures in one organization do not prevent the second lookup', async () => {
+  const waits = [];
+  let calls = 0;
+  const github = createGitHubClient({ token: 'synthetic-write-token', membershipTokens,
+    sleepFn: async ms => { waits.push(ms); }, fetchFn: async url => {
+      calls++;
+      if (url.includes('/dsx-ai-factory/')) throw new Error('PRIVATE_TIMEOUT_DETAIL');
+      return { ok: true, status: 200, json: async () => membership('NVIDIA') };
+    } });
+  const result = await github.findNvidiaMembership(raw().user);
+  assert.equal(result.membership.organization, 'NVIDIA');
+  assert.equal(calls, 4);
+  assert.deepEqual(waits, [1000, 2000]);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_TIMEOUT_DETAIL'), false);
+});
+
+test('a missing DSX token still permits a separately authorized NVIDIA lookup', async () => {
+  const calls = [];
+  const github = createGitHubClient({ token: 'synthetic-write-token', membershipTokens: { NVIDIA: membershipTokens.NVIDIA },
+    fetchFn: async url => { calls.push(url); return { ok: true, status: 200, json: async () => membership('NVIDIA') }; } });
+  assert.equal((await github.findNvidiaMembership(raw().user)).membership.organization, 'NVIDIA');
+  assert.deepEqual(calls, ['https://api.github.com/orgs/NVIDIA/memberships/outside-user']);
+});
+
+test('classification uses authenticated current-author membership and preserves unrelated metadata', async () => {
+  const current = raw({ labels: [{ name: 'bug' }, { name: 'affiliation/unverified' }],
+    user: { id: 1002, login: 'renamed-user', type: 'User' } });
+  const github = api(current);
+  github.findNvidiaMembership = async user => {
+    assert.deepEqual(user, current.user);
+    return { membership: { author_id: 1002, organization: 'NVIDIA', organization_id: 1728152 }, unavailable: false };
+  };
+  const result = await classifyFromActions(args(), github);
+  assert.equal(result.decision.affiliation, 'nvidia');
+  assert.deepEqual(github.writes, [
+    { op: 'add', number: 17, labels: ['affiliation/nvidia'] },
+    { op: 'remove', number: 17, label: 'affiliation/unverified' },
+  ]);
+});
+
+test('unavailable lookup still labels unverified or uses an explicit reviewed exception', async () => {
+  for (const reviewedDecisions of [[], [review()]]) {
+    const github = api();
+    github.findNvidiaMembership = async () => { throw new Error('PRIVATE_MEMBERSHIP_FAILURE'); };
+    const result = await classifyFromActions(args({ reviewedDecisions }), github);
+    assert.equal(result.decision.affiliation, reviewedDecisions.length ? 'external' : 'unverified');
+    assert.ok(result.decision.diagnostics.includes('membership_unavailable'));
+    assert.equal(JSON.stringify(result).includes('PRIVATE_MEMBERSHIP_FAILURE'), false);
+  }
+});
+
+test('Bots skip membership APIs and keep their dedicated label', async () => {
+  const github = api(raw({ user: { id: 1, login: 'dependabot[bot]', type: 'Bot' } }));
+  github.findNvidiaMembership = async () => assert.fail('unexpected bot membership lookup');
+  assert.equal((await classifyFromActions(args(), github)).decision.affiliation, 'bot');
+});
+
 test('opening validation supports issues and draft PRs in the fixed repository', () => {
   const item = openingFromActions('pull_request_target', event());
   assert.equal(item.draft, true);
@@ -244,7 +387,7 @@ test('a sparse acknowledged label array cannot prove an affiliation was removed'
 
 function runIntakeCli({ registry = '[]', current = raw(), mode = 'intake',
     githubToken = 'synthetic-github-token', apply = 'true', eventName = 'pull_request_target',
-    payload = event(), obsoleteEnvironment = {} } = {}) {
+    payload = event(), obsoleteEnvironment = {}, memberships = {}, membershipCredentials = false } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'intake-actions-cli-'));
   try {
     const eventPath = join(directory, 'event.json');
@@ -264,6 +407,11 @@ function runIntakeCli({ registry = '[]', current = raw(), mode = 'intake',
       globalThis.fetch = async (url, options) => {
         appendFileSync(process.env.TEST_API_CALLS, JSON.stringify({url, method: options.method,
           payload: options.body ? JSON.parse(options.body) : null}) + '\n');
+        const org = /^https:\/\/api\.github\.com\/orgs\/(dsx-ai-factory|NVIDIA)\/memberships\/[A-Za-z0-9-]+$/.exec(url)?.[1];
+        if (org) {
+          const response = JSON.parse(process.env.TEST_MEMBERSHIPS)[org] ?? {status: 404};
+          return {ok: response.status === 200, status: response.status, json: async () => response.body};
+        }
         if (!url.startsWith('https://api.github.com/repos/dsx-ai-factory/health-validation/')) throw new Error('unexpected fetch URL');
         return {ok: true, status: 200, json: async () => options.method === 'POST'
           ? JSON.parse(options.body).labels.map(name => ({name})) : options.method === 'DELETE'
@@ -272,7 +420,9 @@ function runIntakeCli({ registry = '[]', current = raw(), mode = 'intake',
     `);
     const env = { ...nodeRuntimeEnvironment(), HEALTH_VALIDATION_APPLY_LABELS: apply, GITHUB_TOKEN: githubToken,
       GITHUB_EVENT_NAME: eventName, GITHUB_EVENT_PATH: eventPath, GITHUB_OUTPUT: outputPath,
-      TEST_API_CALLS: callsPath, TEST_CURRENT_ITEM: JSON.stringify(current), ...obsoleteEnvironment };
+      TEST_API_CALLS: callsPath, TEST_CURRENT_ITEM: JSON.stringify(current), TEST_MEMBERSHIPS: JSON.stringify(memberships), ...obsoleteEnvironment };
+    if (membershipCredentials) Object.assign(env, { HEALTH_VALIDATION_DSX_MEMBERSHIP_TOKEN: 'synthetic-dsx-token',
+      HEALTH_VALIDATION_NVIDIA_MEMBERSHIP_TOKEN: 'synthetic-nvidia-token' });
     if (registry !== null) env.HEALTH_VALIDATION_REVIEWED_DECISIONS_JSON = registry;
     const script = fileURLToPath(new URL('./actions-intake.mjs', import.meta.url));
     const run = spawnSync(process.execPath, ['--import', preload, script, mode], {
@@ -282,6 +432,45 @@ function runIntakeCli({ registry = '[]', current = raw(), mode = 'intake',
       calls: readFileSync(callsPath, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) };
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }
+
+for (const org of ['dsx-ai-factory', 'NVIDIA']) {
+  test(`CLI applies ${org} membership without requiring exception records`, () => {
+    const run = runIntakeCli({ registry: null, membershipCredentials: true,
+      memberships: { [org]: { status: 200, body: membership(org) } } });
+    assert.equal(run.status, 0, run.stderr);
+    assert.deepEqual(run.calls.at(-1).payload.labels, ['affiliation/nvidia']);
+    assert.equal(run.stderr, '');
+    for (const privateValue of ['outside-user', 'synthetic-dsx-token', 'synthetic-nvidia-token']) {
+      assert.equal((run.stdout + run.stderr + run.output).includes(privateValue), false);
+    }
+  });
+}
+
+test('CLI keeps membership and an explicit external exception conflict visible', () => {
+  const currentReview = review({ reviewed_at: new Date(Date.now() - 60000).toISOString(),
+    expires_at: new Date(Date.now() + 3600000).toISOString() });
+  const run = runIntakeCli({ registry: JSON.stringify([currentReview]), membershipCredentials: true,
+    memberships: { 'dsx-ai-factory': { status: 200, body: membership() } } });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(run.calls.at(-1).payload.labels, ['affiliation/unverified']);
+});
+
+test('CLI does not ignore malformed exceptions when membership is positive', () => {
+  const run = runIntakeCli({ registry: 'PRIVATE_INVALID_REGISTRY', membershipCredentials: true,
+    memberships: { NVIDIA: { status: 200, body: membership('NVIDIA') } } });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(run.calls.at(-1).payload.labels, ['affiliation/unverified']);
+  assert.match(run.stderr, /evidence/i);
+  assert.equal((run.stdout + run.stderr).includes('PRIVATE_INVALID_REGISTRY'), false);
+});
+
+test('CLI token/read failures still create an unverified intake label', () => {
+  const run = runIntakeCli({ membershipCredentials: true,
+    memberships: { 'dsx-ai-factory': { status: 403 }, NVIDIA: { status: 429 } } });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(run.calls.map(call => call.method), ['GET', 'GET', 'GET', 'POST']);
+  assert.deepEqual(run.calls.at(-1).payload.labels, ['affiliation/unverified']);
+});
 
 for (const [name, routingJson, slackToken] of [
   ['invalid configuration', 'PRIVATE_OBSOLETE_ROUTING', ''],

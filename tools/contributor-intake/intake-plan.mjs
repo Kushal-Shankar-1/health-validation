@@ -4,6 +4,7 @@
 const REPOSITORY_ID = 1295779810;
 const REPOSITORY = 'dsx-ai-factory/health-validation';
 const MANAGED_LABELS = ['nvidia', 'external', 'unverified', 'bot'].map(value => `affiliation/${value}`);
+const ORGANIZATIONS = { 'dsx-ai-factory': 311157577, NVIDIA: 1728152 };
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const positiveInteger = value => Number.isSafeInteger(value) && value > 0;
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
@@ -120,7 +121,19 @@ export function planIntake(input) {
   if (author.bot) {
     affiliation = 'bot';
   } else if (author.human) {
-    affiliation = reviewedAffiliation(author, reviews, now, diagnostics) ?? 'unverified';
+    const reviewed = reviewedAffiliation(author, reviews, now, diagnostics);
+    affiliation = reviewed ?? 'unverified';
+    const membership = input.membership;
+    const confirmed = isRecord(membership) && membership.author_id === author.id &&
+      Object.hasOwn(ORGANIZATIONS, membership.organization) &&
+      membership.organization_id === ORGANIZATIONS[membership.organization];
+    if (membership != null && !confirmed) diagnostics.push('membership_invalid');
+    if (confirmed && reviewed === 'external') {
+      affiliation = 'unverified';
+      diagnostics.push('affiliation_conflict');
+    } else if (confirmed && reviewed !== 'unverified' && !diagnostics.includes('reviewed_decisions_malformed')) {
+      affiliation = 'nvidia';
+    }
   } else {
     diagnostics.push('author_unavailable');
   }
