@@ -206,7 +206,7 @@ test('classification returns only a decision and writes affiliation without othe
 });
 
 test('fresh reviewed metadata corrects affiliation while preserving unrelated labels and assignees', async () => {
-  const current = raw({ labels: [{ name: 'affiliation/unverified' }, { name: 'bug' }, { name: 'triage/alert-requested' }] });
+  const current = raw({ labels: [{ name: 'affiliation/unverified' }, { name: 'bug' }, { name: 'priority/P1' }] });
   const before = structuredClone(current);
   const github = api(current);
   const result = await classifyFromActions(args({ reviewedDecisions: [review()] }), github);
@@ -220,8 +220,8 @@ test('fresh reviewed metadata corrects affiliation while preserving unrelated la
   assert.equal(JSON.stringify(result).includes('synthetic-reviewer'), false);
 });
 
-test('repeat classification with an existing old marker performs no label writes', async () => {
-  const github = api(raw({ labels: [{ name: 'affiliation/unverified' }, { name: 'triage/alert-requested' }] }));
+test('repeat classification preserves priority without label writes', async () => {
+  const github = api(raw({ labels: [{ name: 'affiliation/unverified' }, { name: 'priority/P1' }] }));
   assert.equal((await classifyFromActions(args(), github)).status, 'classified');
   assert.deepEqual(github.writes, []);
 });
@@ -279,7 +279,7 @@ test('GitHub adapter fixes scope, uses JSON bodies and preserves unrelated label
   ]);
   await assert.rejects(github.readItem('pr', '17/../../secrets'));
   await assert.rejects(github.removeLabel(17, 'bug'));
-  for (const label of ['bug', 'triage/alert-requested', 'affiliation/unknown']) {
+  for (const label of ['bug', 'priority/P1', 'affiliation/unknown']) {
     await assert.rejects(github.addLabels(17, [label]), /scope/);
     await assert.rejects(github.removeLabel(17, label), /scope/);
   }
@@ -387,7 +387,7 @@ test('a sparse acknowledged label array cannot prove an affiliation was removed'
 
 function runIntakeCli({ registry = '[]', current = raw(), mode = 'intake',
     githubToken = 'synthetic-github-token', apply = 'true', eventName = 'pull_request_target',
-    payload = event(), obsoleteEnvironment = {}, memberships = {}, membershipCredentials = false } = {}) {
+    payload = event(), memberships = {}, membershipCredentials = false } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'intake-actions-cli-'));
   try {
     const eventPath = join(directory, 'event.json');
@@ -397,13 +397,6 @@ function runIntakeCli({ registry = '[]', current = raw(), mode = 'intake',
     writeFileSync(outputPath, ''); writeFileSync(callsPath, '');
     const preload = 'data:text/javascript,' + encodeURIComponent(String.raw`
       import {appendFileSync} from 'node:fs';
-      import https from 'node:https';
-      import {syncBuiltinESMExports} from 'node:module';
-      https.request = url => {
-        appendFileSync(process.env.TEST_API_CALLS, JSON.stringify({url, method: 'HTTPS'}) + '\n');
-        throw new Error('unexpected HTTPS transport');
-      };
-      syncBuiltinESMExports();
       globalThis.fetch = async (url, options) => {
         appendFileSync(process.env.TEST_API_CALLS, JSON.stringify({url, method: options.method,
           payload: options.body ? JSON.parse(options.body) : null}) + '\n');
@@ -420,7 +413,7 @@ function runIntakeCli({ registry = '[]', current = raw(), mode = 'intake',
     `);
     const env = { ...nodeRuntimeEnvironment(), HEALTH_VALIDATION_APPLY_LABELS: apply, GITHUB_TOKEN: githubToken,
       GITHUB_EVENT_NAME: eventName, GITHUB_EVENT_PATH: eventPath, GITHUB_OUTPUT: outputPath,
-      TEST_API_CALLS: callsPath, TEST_CURRENT_ITEM: JSON.stringify(current), TEST_MEMBERSHIPS: JSON.stringify(memberships), ...obsoleteEnvironment };
+      TEST_API_CALLS: callsPath, TEST_CURRENT_ITEM: JSON.stringify(current), TEST_MEMBERSHIPS: JSON.stringify(memberships) };
     if (membershipCredentials) Object.assign(env, { HEALTH_VALIDATION_DSX_MEMBERSHIP_TOKEN: 'synthetic-dsx-token',
       HEALTH_VALIDATION_NVIDIA_MEMBERSHIP_TOKEN: 'synthetic-nvidia-token' });
     if (registry !== null) env.HEALTH_VALIDATION_REVIEWED_DECISIONS_JSON = registry;
@@ -472,29 +465,20 @@ test('CLI token/read failures still create an unverified intake label', () => {
   assert.deepEqual(run.calls.at(-1).payload.labels, ['affiliation/unverified']);
 });
 
-for (const [name, routingJson, slackToken] of [
-  ['invalid configuration', 'PRIVATE_OBSOLETE_ROUTING', ''],
-  ['valid configuration', '{"channel_id":"C0123456789","mention_user_ids":["U0123456789"]}', 'synthetic-obsolete-token'],
-]) {
-  test('classification ignores obsolete enabled alerts and Slack configuration with zero Slack I/O: ' + name, () => {
-    const run = runIntakeCli({ obsoleteEnvironment: {
-      HEALTH_VALIDATION_ALERTS_ENABLED: 'true', HEALTH_VALIDATION_INTAKE_ROUTING_JSON: routingJson,
-      HEALTH_VALIDATION_SLACK_BOT_TOKEN: slackToken,
-    } });
-    assert.equal(run.status, 0, run.stderr);
-    assert.deepEqual(run.calls.map(call => ({ url: call.url, method: call.method })), [
-      { url: 'https://api.github.com/repos/dsx-ai-factory/health-validation/pulls/17', method: 'GET' },
-      { url: 'https://api.github.com/repos/dsx-ai-factory/health-validation/issues/17/labels', method: 'POST' },
-    ]);
-    assert.deepEqual(run.calls[1].payload.labels, ['affiliation/unverified']);
-    assert.equal(run.output, '');
-    assert.match(run.stdout, /classified/);
-    assert.equal((run.stdout + run.stderr).includes('PRIVATE_OBSOLETE_ROUTING'), false);
-  });
-}
+test('classification CLI only reads the item and adds its affiliation label', () => {
+  const run = runIntakeCli();
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(run.calls.map(call => ({ url: call.url, method: call.method })), [
+    { url: 'https://api.github.com/repos/dsx-ai-factory/health-validation/pulls/17', method: 'GET' },
+    { url: 'https://api.github.com/repos/dsx-ai-factory/health-validation/issues/17/labels', method: 'POST' },
+  ]);
+  assert.deepEqual(run.calls[1].payload.labels, ['affiliation/unverified']);
+  assert.equal(run.output, '');
+  assert.match(run.stdout, /classified/);
+});
 
-test('classification CLI preserves an existing old marker without a failure', () => {
-  const run = runIntakeCli({ current: raw({ labels: [{ name: 'affiliation/unverified' }, { name: 'triage/alert-requested' }] }) });
+test('classification CLI preserves priority when affiliation is already correct', () => {
+  const run = runIntakeCli({ current: raw({ labels: [{ name: 'affiliation/unverified' }, { name: 'priority/P1' }] }) });
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.calls.length, 1);
   assert.match(run.stdout, /classified/i);

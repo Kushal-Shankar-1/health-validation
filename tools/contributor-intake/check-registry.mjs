@@ -27,7 +27,6 @@ function cli() {
     return;
   }
   process.stdout.write(`Registry format valid: ${result.record_count} records. Evidence still requires review before upload.\n`);
-  if (!result.record_count) process.stdout.write('No human decisions; human authors will remain unverified.\n');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

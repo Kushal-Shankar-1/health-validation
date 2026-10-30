@@ -178,12 +178,12 @@ test('draft and closed PRs retain state without mutating creation time', () => {
   assert.equal(data.item.draft, true);
 });
 
-test('an existing old marker remains an unrelated label', () => {
-  const marked = planIntake(input({ item: item({ labels: ['bug', 'affiliation/unverified', 'triage/alert-requested'] }), reviewed_decisions: [review()] }));
+test('reviewed affiliation preserves an existing priority label', () => {
+  const marked = planIntake(input({ item: item({ labels: ['bug', 'affiliation/unverified', 'priority/P1'] }), reviewed_decisions: [review()] }));
   assert.equal(marked.affiliation, 'external');
   assert.deepEqual(marked.diagnostics, []);
-  assert.equal(marked.label_changes.remove.includes('triage/alert-requested'), false);
-  assert.equal(marked.label_changes.add.includes('triage/alert-requested'), false);
+  assert.equal(marked.label_changes.remove.includes('priority/P1'), false);
+  assert.equal(marked.label_changes.add.includes('priority/P1'), false);
 });
 
 test('invalid evaluation timestamp fails visibly', () => {
